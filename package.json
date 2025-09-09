@@ -20,6 +20,7 @@
     "supertest": "^6.3.3"
   },
   "scripts": {
+    "start:kiro": "node src/api-server.js --model-provider claude-kiro-oauth --kiro-oauth-creds-file \"C:\\\\Users\\\\Administrator\\\\.aws\\\\sso\\\\cache\\\\kiro-auth-token.json\"",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
