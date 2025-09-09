@@ -30,7 +30,7 @@ DOCKER_CMD="docker run -d \\
   --restart=always \\
   --privileged=true \\
   -p 3000:3000 \\
-   -e ARGS=\"--api-key 123456 --host 0.0.0.0 --port 3000\" \\
+   -e ARGS=\"--model-provider claude-kiro-oauth --api-key 123456 --host 0.0.0.0 --port 3000\" \\
   -e KIRO_OAUTH_CREDS_DIR_PATH=\"/.aws/sso/cache/kiro-auth-token.json\" \\
   -v \"$AWS_SSO_CACHE_PATH:/.aws/sso/cache/kiro-auth-token.json\" \\
   --name aiclient2api \\
