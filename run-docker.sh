@@ -5,7 +5,7 @@
 echo "正在生成指定的Docker运行命令..."
 
 # 设置配置文件路径，使用HOME环境变量
-AWS_SSO_CACHE_PATH="$HOME/.aws/sso/cache"
+AWS_SSO_CACHE_PATH="$HOME/.aws/sso/cache/kiro-auth-token.json"
 GEMINI_CONFIG_PATH="$HOME/.gemini/oauth_creds.json"
 
 # 检查AWS SSO缓存目录是否存在
@@ -30,9 +30,9 @@ DOCKER_CMD="docker run -d \\
   --restart=always \\
   --privileged=true \\
   -p 3000:3000 \\
-   -e ARGS=\"--api-key 123456 --host 0.0.0.0\" \\
-  -v $AWS_SSO_CACHE_PATH:/root/.aws/sso/cache \\
-  -v $GEMINI_CONFIG_PATH:/root/.gemini/oauth_creds.json \\
+   -e ARGS=\"--api-key 123456 --host 0.0.0.0 --port 3000\" \\
+  -e KIRO_OAUTH_CREDS_DIR_PATH=\"/.aws/sso/cache/kiro-auth-token.json\" \\
+  -v \"$AWS_SSO_CACHE_PATH:/.aws/sso/cache/kiro-auth-token.json\" \\
   --name aiclient2api \\
   aiclient2api"
 

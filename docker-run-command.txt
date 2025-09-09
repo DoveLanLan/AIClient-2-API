@@ -1,0 +1,10 @@
+docker run -d \
+  -u 501:20 \
+  --restart=always \
+  --privileged=true \
+  -p 3000:3000 \
+   -e ARGS="--api-key 123456 --host 0.0.0.0 --port 3000" \
+  -e KIRO_OAUTH_CREDS_DIR_PATH="/.aws/sso/cache/kiro-auth-token.json" \
+  -v "/Users/malan/.aws/sso/cache/kiro-auth-token.json:/.aws/sso/cache/kiro-auth-token.json" \
+  --name aiclient2api \
+  aiclient2api
