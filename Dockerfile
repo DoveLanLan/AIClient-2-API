@@ -22,8 +22,8 @@ COPY . .
 
 USER root
 
-# 创建目录用于存储日志和系统提示文件
-RUN mkdir -p /app/logs
+# 创建目录用于存储日志、系统提示文件和凭据
+RUN mkdir -p /app/logs /app/.aws/sso/cache
 
 # 暴露端口
 EXPOSE 3000

@@ -1,0 +1,20 @@
+services:
+  aiclient2api:
+    build: .
+    container_name: aiclient2api
+    restart: always
+    privileged: true
+    ports:
+      - "3000:3000"
+    environment:
+      - TZ=Asia/Shanghai
+      - ARGS=--model-provider claude-kiro-oauth --api-key 123456 --host 0.0.0.0 --port 3000 --kiro-oauth-creds-file /app/.aws/sso/cache/kiro-auth-token.json
+    volumes:
+      - ${HOME}/.aws/sso/cache/kiro-auth-token.json:/app/.aws/sso/cache/kiro-auth-token.json:rw
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.js"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
