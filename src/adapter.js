@@ -198,9 +198,9 @@ export class KiroApiServiceAdapter extends ApiServiceAdapter {
             try {
                 return await this.kiroApiService.smartRefreshToken();
             } catch (error) {
-                console.error(`[Kiro] Smart token refresh failed, falling back to normal refresh:`, error.message);
-                // 如果智能刷新失败，尝试传统刷新作为最后手段
-                return this.kiroApiService.initializeAuth(true);
+                console.error(`[Kiro] Smart token refresh failed:`, error.message);
+                console.log(`[Kiro] All token refresh strategies exhausted. Service may be temporarily unavailable.`);
+                throw error; // 不再尝试传统刷新，因为智能刷新已经包含了所有策略
             }
         }
         return Promise.resolve();

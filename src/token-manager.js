@@ -183,61 +183,80 @@ export class TokenManager {
    * 智能 token 刷新策略
    */
   async smartRefresh(kiroApiService) {
-    try {
-      // 首先尝试正常的 token 刷新
-      console.log("[Token Manager] Attempting normal token refresh...");
-      await kiroApiService.initializeAuth(true);
-      console.log("[Token Manager] Normal token refresh successful");
+    console.log("[Token Manager] Starting smart refresh strategy...");
+    
+    // 首先检查当前 token 状态
+    const currentTokenExpired = this.isTokenExpired(kiroApiService.expiresAt);
+    const currentTokenExpiringSoon = this.isTokenExpiringSoon(kiroApiService.expiresAt);
+    
+    console.log(`[Token Manager] Current token status - Expired: ${currentTokenExpired}, Expiring Soon: ${currentTokenExpiringSoon}`);
+    
+    // 如果当前 token 还有效且不即将过期，直接返回
+    if (!currentTokenExpired && !currentTokenExpiringSoon) {
+      console.log("[Token Manager] Current token is still valid, no refresh needed");
       return true;
-    } catch (error) {
-      console.warn(
-        "[Token Manager] Normal token refresh failed:",
-        error.message
-      );
-
-      // 如果正常刷新失败，尝试切换到最佳可用 token
+    }
+    
+    // 策略1: 如果当前 token 只是即将过期但还没过期，尝试正常刷新
+    if (!currentTokenExpired && currentTokenExpiringSoon) {
       try {
-        console.log(
-          "[Token Manager] Attempting to switch to best available token..."
-        );
-        const newTokenData = await this.switchToBestToken();
-
-        // 更新 kiroApiService 的 token 信息
-        kiroApiService.accessToken = newTokenData.accessToken;
-        kiroApiService.refreshToken = newTokenData.refreshToken;
-        kiroApiService.expiresAt = newTokenData.expiresAt;
-        if (newTokenData.profileArn) {
-          kiroApiService.profileArn = newTokenData.profileArn;
-        }
-
-        console.log("[Token Manager] Successfully switched to new token");
-
-        // 如果新 token 也即将过期，尝试刷新它
-        if (this.isTokenExpiringSoon(newTokenData.expiresAt)) {
-          console.log(
-            "[Token Manager] New token is expiring soon, attempting refresh..."
-          );
-          try {
-            await kiroApiService.initializeAuth(true);
-            console.log("[Token Manager] New token refresh successful");
-          } catch (refreshError) {
-            console.warn(
-              "[Token Manager] New token refresh failed, but will continue with current token:",
-              refreshError.message
-            );
-          }
-        }
-
+        console.log("[Token Manager] Attempting normal token refresh for expiring token...");
+        await kiroApiService.initializeAuth(true);
+        console.log("[Token Manager] Normal token refresh successful");
         return true;
-      } catch (switchError) {
-        console.error(
-          "[Token Manager] Failed to switch to alternative token:",
-          switchError.message
-        );
-        throw new Error(
-          `All token refresh strategies failed: ${error.message} | ${switchError.message}`
-        );
+      } catch (error) {
+        console.warn("[Token Manager] Normal token refresh failed:", error.message);
+        // 继续到策略2
       }
+    }
+    
+    // 策略2: 切换到最佳可用 token
+    try {
+      console.log("[Token Manager] Attempting to switch to best available token...");
+      const newTokenData = await this.switchToBestToken();
+
+      // 更新 kiroApiService 的 token 信息
+      kiroApiService.accessToken = newTokenData.accessToken;
+      kiroApiService.refreshToken = newTokenData.refreshToken;
+      kiroApiService.expiresAt = newTokenData.expiresAt;
+      if (newTokenData.profileArn) {
+        kiroApiService.profileArn = newTokenData.profileArn;
+      }
+      if (newTokenData.clientIdHash) {
+        kiroApiService.clientIdHash = newTokenData.clientIdHash;
+      }
+      if (newTokenData.authMethod) {
+        kiroApiService.authMethod = newTokenData.authMethod;
+      }
+      if (newTokenData.region) {
+        kiroApiService.region = newTokenData.region;
+      }
+
+      console.log("[Token Manager] Successfully switched to new token");
+
+      // 策略3: 如果新 token 也即将过期，尝试刷新它
+      if (this.isTokenExpiringSoon(newTokenData.expiresAt)) {
+        console.log("[Token Manager] New token is expiring soon, attempting refresh...");
+        try {
+          await kiroApiService.initializeAuth(true);
+          console.log("[Token Manager] New token refresh successful");
+        } catch (refreshError) {
+          console.warn(
+            "[Token Manager] New token refresh failed, but will continue with current token:",
+            refreshError.message
+          );
+        }
+      }
+
+      return true;
+    } catch (switchError) {
+      console.error(
+        "[Token Manager] Failed to switch to alternative token:",
+        switchError.message
+      );
+      throw new Error(
+        `All token refresh strategies failed. Please re-authenticate manually. Error: ${switchError.message}`
+      );
     }
   }
 

@@ -875,14 +875,14 @@ export class KiroApiService {
     } catch (error) {
       if (error.response?.status === 403 && !isRetry) {
         console.log(
-          "[Kiro] Received 403. Attempting token refresh and retrying..."
+          "[Kiro] Received 403. Attempting smart token refresh and retrying..."
         );
         try {
-          await this.initializeAuth(true); // Force refresh token
+          await this.smartRefreshToken(); // 使用智能刷新方法
           return this.callApi(method, model, body, true, retryCount);
         } catch (refreshError) {
           console.error(
-            "[Kiro] Token refresh failed during 403 retry:",
+            "[Kiro] Smart token refresh failed during 403 retry:",
             refreshError.message
           );
           throw refreshError;
