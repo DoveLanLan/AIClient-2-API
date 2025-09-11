@@ -533,6 +533,50 @@ function createRequestHandler(config) {
             }));
         }
 
+        // Token management endpoints - require authentication
+        if (method === 'GET' && path === '/admin/token-status') {
+            try {
+                let tokenReport = { error: 'Token status not available for this provider' };
+                
+                // 只有 Kiro 提供者支持 token 状态报告
+                if (currentConfig.MODEL_PROVIDER === 'claude-kiro-oauth' && apiService.kiroApiService) {
+                    tokenReport = await apiService.kiroApiService.getTokenStatusReport();
+                }
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({
+                    provider: currentConfig.MODEL_PROVIDER,
+                    timestamp: new Date().toISOString(),
+                    tokenStatus: tokenReport
+                }));
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: { message: `Token status check failed: ${error.message}` } }));
+            }
+        }
+
+        if (method === 'POST' && path === '/admin/refresh-token') {
+            try {
+                let refreshResult = { success: false, message: 'Token refresh not supported for this provider' };
+                
+                // 只有 Kiro 提供者支持智能 token 刷新
+                if (currentConfig.MODEL_PROVIDER === 'claude-kiro-oauth' && apiService.kiroApiService) {
+                    await apiService.kiroApiService.smartRefreshToken();
+                    refreshResult = { success: true, message: 'Token refreshed successfully' };
+                }
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({
+                    provider: currentConfig.MODEL_PROVIDER,
+                    timestamp: new Date().toISOString(),
+                    result: refreshResult
+                }));
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: { message: `Token refresh failed: ${error.message}` } }));
+            }
+        }
+
         if (!isAuthorized(req, requestUrl, currentConfig.REQUIRED_API_KEY)) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ error: { message: 'Unauthorized: API key is invalid or missing.' } }));

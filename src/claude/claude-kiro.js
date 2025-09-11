@@ -4,6 +4,7 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import * as os from "os";
 import * as crypto from "crypto";
+import { TokenManager } from "../token-manager.js";
 
 const KIRO_CONSTANTS = {
   REFRESH_URL: "https://prod.{{region}}.auth.desktop.kiro.dev/refreshToken",
@@ -246,6 +247,9 @@ export class KiroApiService {
       config.KIRO_OAUTH_CREDS_DIR_PATH ||
       path.join(os.homedir(), ".aws", "sso", "cache");
     this.credsBase64 = config.KIRO_OAUTH_CREDS_BASE64;
+    
+    // 初始化增强的 Token 管理器
+    this.tokenManager = new TokenManager(config);
     // this.accessToken = config.KIRO_ACCESS_TOKEN;
     // this.refreshToken = config.KIRO_REFRESH_TOKEN;
     // this.clientId = config.KIRO_CLIENT_ID;
@@ -1262,5 +1266,27 @@ export class KiroApiService {
       );
       return false; // Treat as expired if parsing fails
     }
+  }
+
+  /**
+   * 智能 token 刷新方法，包含自动备用 token 切换
+   * @returns {Promise<boolean>} - 刷新是否成功
+   */
+  async smartRefreshToken() {
+    try {
+      console.log('[Kiro] Starting smart token refresh...');
+      return await this.tokenManager.smartRefresh(this);
+    } catch (error) {
+      console.error('[Kiro] Smart token refresh failed:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取 token 状态报告
+   * @returns {Promise<Object>} - token 状态报告
+   */
+  async getTokenStatusReport() {
+    return await this.tokenManager.getTokenStatusReport();
   }
 }

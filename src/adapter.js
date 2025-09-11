@@ -194,8 +194,14 @@ export class KiroApiServiceAdapter extends ApiServiceAdapter {
 
     async refreshToken() {
         if(this.kiroApiService.isExpiryDateNear()===true){
-            console.log(`[Kiro] Expiry date is near, refreshing token...`);
-            return this.kiroApiService.initializeAuth(true);
+            console.log(`[Kiro] Expiry date is near, starting smart token refresh...`);
+            try {
+                return await this.kiroApiService.smartRefreshToken();
+            } catch (error) {
+                console.error(`[Kiro] Smart token refresh failed, falling back to normal refresh:`, error.message);
+                // 如果智能刷新失败，尝试传统刷新作为最后手段
+                return this.kiroApiService.initializeAuth(true);
+            }
         }
         return Promise.resolve();
     }
