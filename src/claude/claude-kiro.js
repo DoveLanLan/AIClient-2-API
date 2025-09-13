@@ -289,7 +289,15 @@ export class KiroApiService {
   async initialize() {
     if (this.isInitialized) return;
     console.log("[Kiro] Initializing Kiro API Service...");
-    await this.initializeAuth();
+    
+    try {
+      await this.initializeAuth();
+    } catch (error) {
+      console.error("[Kiro] Auth initialization failed:", error.message);
+      // 即使认证失败，我们也要完成基本的初始化，这样后续可以尝试智能刷新
+      console.log("[Kiro] Continuing with basic initialization despite auth failure...");
+    }
+    
     const macSha256 = await getMacAddressSha256();
     this.axiosInstance = axios.create({
       timeout: KIRO_CONSTANTS.AXIOS_TIMEOUT,
@@ -304,6 +312,7 @@ export class KiroApiService {
       },
     });
     this.isInitialized = true;
+    console.log("[Kiro] Basic initialization completed");
   }
 
   async initializeAuth(forceRefresh = false) {
