@@ -4,6 +4,7 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import * as os from "os";
 import * as crypto from "crypto";
+import * as https from "https";
 import { TokenManager } from "../token-manager.js";
 
 const KIRO_CONSTANTS = {
@@ -307,7 +308,7 @@ export class KiroApiService {
         return status < 500; // 只有 5xx 错误才被认为是错误
       },
       // 添加连接和响应超时
-      httpsAgent: process.env.NODE_ENV === 'production' ? undefined : new (require('https').Agent)({
+      httpsAgent: process.env.NODE_ENV === 'production' ? undefined : new https.Agent({
         keepAlive: true,
         timeout: 30000, // 30秒连接超时
       }),
