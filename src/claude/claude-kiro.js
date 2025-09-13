@@ -301,6 +301,16 @@ export class KiroApiService {
     const macSha256 = await getMacAddressSha256();
     this.axiosInstance = axios.create({
       timeout: KIRO_CONSTANTS.AXIOS_TIMEOUT,
+      // 添加更好的网络连接配置
+      maxRedirects: 5,
+      validateStatus: function (status) {
+        return status < 500; // 只有 5xx 错误才被认为是错误
+      },
+      // 添加连接和响应超时
+      httpsAgent: process.env.NODE_ENV === 'production' ? undefined : new (require('https').Agent)({
+        keepAlive: true,
+        timeout: 30000, // 30秒连接超时
+      }),
       headers: {
         "Content-Type": KIRO_CONSTANTS.CONTENT_TYPE_JSON,
         "x-amz-user-agent": `aws-sdk-js/1.0.7 KiroIDE-0.1.25-${macSha256}`,
@@ -309,6 +319,8 @@ export class KiroApiService {
         "x-amzn-kiro-agent-mode": "vibe",
         "Content-Type": KIRO_CONSTANTS.CONTENT_TYPE_JSON,
         Accept: KIRO_CONSTANTS.ACCEPT_JSON,
+        // 添加连接保持头
+        "Connection": "keep-alive",
       },
     });
     this.isInitialized = true;
@@ -928,6 +940,18 @@ export class KiroApiService {
         return this.callApi(method, model, body, isRetry, retryCount + 1);
       }
 
+      // Handle network connection errors
+      if (this.isNetworkError(error) && retryCount < maxRetries) {
+        const delay = baseDelay * Math.pow(2, retryCount);
+        console.log(
+          `[Kiro] Network connection error: ${error.message}. Retrying in ${delay}ms... (attempt ${
+            retryCount + 1
+          }/${maxRetries})`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return this.callApi(method, model, body, isRetry, retryCount + 1);
+      }
+
       console.error("[Kiro] API call failed:", error.message);
       throw error;
     }
@@ -1289,6 +1313,44 @@ export class KiroApiService {
       console.error('[Kiro] Smart token refresh failed:', error.message);
       throw error;
     }
+  }
+
+  /**
+   * 检查是否为网络连接错误
+   * @param {Error} error - 错误对象
+   * @returns {boolean} - 是否为网络错误
+   */
+  isNetworkError(error) {
+    // 检查常见的网络错误代码和消息
+    const networkErrorCodes = [
+      'ECONNRESET',
+      'ECONNREFUSED', 
+      'ENOTFOUND',
+      'ETIMEDOUT',
+      'ECONNABORTED',
+      'EHOSTUNREACH',
+      'ENETUNREACH'
+    ];
+    
+    const networkErrorMessages = [
+      'socket disconnected',
+      'connection was established',
+      'network error',
+      'timeout',
+      'connection reset',
+      'connection refused',
+      'host unreachable',
+      'network unreachable'
+    ];
+    
+    // 检查错误代码
+    if (error.code && networkErrorCodes.includes(error.code)) {
+      return true;
+    }
+    
+    // 检查错误消息
+    const errorMessage = error.message?.toLowerCase() || '';
+    return networkErrorMessages.some(msg => errorMessage.includes(msg));
   }
 
   /**
