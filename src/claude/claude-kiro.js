@@ -248,7 +248,7 @@ export class KiroApiService {
       config.KIRO_OAUTH_CREDS_DIR_PATH ||
       path.join(os.homedir(), ".aws", "sso", "cache");
     this.credsBase64 = config.KIRO_OAUTH_CREDS_BASE64;
-    
+
     // 初始化增强的 Token 管理器
     this.tokenManager = new TokenManager(config);
     // this.accessToken = config.KIRO_ACCESS_TOKEN;
@@ -290,15 +290,17 @@ export class KiroApiService {
   async initialize() {
     if (this.isInitialized) return;
     console.log("[Kiro] Initializing Kiro API Service...");
-    
+
     try {
       await this.initializeAuth();
     } catch (error) {
       console.error("[Kiro] Auth initialization failed:", error.message);
       // 即使认证失败，我们也要完成基本的初始化，这样后续可以尝试智能刷新
-      console.log("[Kiro] Continuing with basic initialization despite auth failure...");
+      console.log(
+        "[Kiro] Continuing with basic initialization despite auth failure..."
+      );
     }
-    
+
     const macSha256 = await getMacAddressSha256();
     this.axiosInstance = axios.create({
       timeout: KIRO_CONSTANTS.AXIOS_TIMEOUT,
@@ -308,9 +310,13 @@ export class KiroApiService {
         return status < 500; // 只有 5xx 错误才被认为是错误
       },
       // 添加连接和响应超时
-      httpsAgent: process.env.NODE_ENV === 'production' ? undefined : new https.Agent({
+      httpsAgent: new https.Agent({
         keepAlive: true,
         timeout: 30000, // 30秒连接超时
+        maxSockets: 50,
+        maxFreeSockets: 10,
+        // 添加更长的空闲超时，避免流中断
+        freeSocketTimeout: 60000, // 60秒空闲超时
       }),
       headers: {
         "Content-Type": KIRO_CONSTANTS.CONTENT_TYPE_JSON,
@@ -321,7 +327,7 @@ export class KiroApiService {
         "Content-Type": KIRO_CONSTANTS.CONTENT_TYPE_JSON,
         Accept: KIRO_CONSTANTS.ACCEPT_JSON,
         // 添加连接保持头
-        "Connection": "keep-alive",
+        Connection: "keep-alive",
       },
     });
     this.isInitialized = true;
@@ -945,7 +951,9 @@ export class KiroApiService {
       if (this.isNetworkError(error) && retryCount < maxRetries) {
         const delay = baseDelay * Math.pow(2, retryCount);
         console.log(
-          `[Kiro] Network connection error: ${error.message}. Retrying in ${delay}ms... (attempt ${
+          `[Kiro] Network connection error: ${
+            error.message
+          }. Retrying in ${delay}ms... (attempt ${
             retryCount + 1
           }/${maxRetries})`
         );
@@ -1308,10 +1316,10 @@ export class KiroApiService {
    */
   async smartRefreshToken() {
     try {
-      console.log('[Kiro] Starting smart token refresh...');
+      console.log("[Kiro] Starting smart token refresh...");
       return await this.tokenManager.smartRefresh(this);
     } catch (error) {
-      console.error('[Kiro] Smart token refresh failed:', error.message);
+      console.error("[Kiro] Smart token refresh failed:", error.message);
       throw error;
     }
   }
@@ -1324,34 +1332,66 @@ export class KiroApiService {
   isNetworkError(error) {
     // 检查常见的网络错误代码和消息
     const networkErrorCodes = [
-      'ECONNRESET',
-      'ECONNREFUSED', 
-      'ENOTFOUND',
-      'ETIMEDOUT',
-      'ECONNABORTED',
-      'EHOSTUNREACH',
-      'ENETUNREACH'
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "ENOTFOUND",
+      "ETIMEDOUT",
+      "ECONNABORTED",
+      "EHOSTUNREACH",
+      "ENETUNREACH",
     ];
-    
+
     const networkErrorMessages = [
-      'socket disconnected',
-      'connection was established',
-      'network error',
-      'timeout',
-      'connection reset',
-      'connection refused',
-      'host unreachable',
-      'network unreachable'
+      "socket disconnected",
+      "connection was established",
+      "network error",
+      "timeout",
+      "connection reset",
+      "connection refused",
+      "host unreachable",
+      "network unreachable",
+      "stream has been aborted", // 添加流中断错误
+      "socket hang up",
+      "request aborted",
+      "premature close",
     ];
-    
+
     // 检查错误代码
     if (error.code && networkErrorCodes.includes(error.code)) {
       return true;
     }
-    
+
     // 检查错误消息
-    const errorMessage = error.message?.toLowerCase() || '';
-    return networkErrorMessages.some(msg => errorMessage.includes(msg));
+    const errorMessage = error.message?.toLowerCase() || "";
+    return networkErrorMessages.some((msg) => errorMessage.includes(msg));
+  }
+
+  /**
+   * 处理流相关的错误
+   * @param {Error} error - 错误对象
+   * @param {number} retryCount - 当前重试次数
+   * @returns {boolean} - 是否应该重试
+   */
+  shouldRetryStreamError(error, retryCount = 0) {
+    const maxRetries = this.config.REQUEST_MAX_RETRIES || 3;
+
+    // 如果已经达到最大重试次数，不再重试
+    if (retryCount >= maxRetries) {
+      return false;
+    }
+
+    // 检查是否为可重试的流错误
+    const retryableStreamErrors = [
+      "stream has been aborted",
+      "socket hang up",
+      "request aborted",
+      "premature close",
+      "connection reset",
+      "timeout",
+    ];
+
+    const errorMessage = error.message?.toLowerCase() || "";
+    return retryableStreamErrors.some((msg) => errorMessage.includes(msg));
   }
 
   /**
