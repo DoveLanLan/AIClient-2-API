@@ -301,13 +301,19 @@ export class KiroApiService {
       );
     }
 
+    if (!this.accessToken) {
+      throw new Error(
+        "[Kiro] Failed to obtain access token during initialization. Please verify Kiro OAuth credentials."
+      );
+    }
+
     const macSha256 = await getMacAddressSha256();
     this.axiosInstance = axios.create({
       timeout: KIRO_CONSTANTS.AXIOS_TIMEOUT,
       // 添加更好的网络连接配置
       maxRedirects: 5,
       validateStatus: function (status) {
-        return status < 500; // 只有 5xx 错误才被认为是错误
+        return status >= 200 && status < 400; // Treat 4xx/5xx as errors to surface auth issues
       },
       // 添加连接和响应超时
       httpsAgent: new https.Agent({
@@ -899,6 +905,15 @@ export class KiroApiService {
       const response = await this.axiosInstance.post(requestUrl, requestData, {
         headers,
       });
+
+      if (response.status >= 400) {
+        throw new Error(
+          `Kiro API returned HTTP ${response.status}: ${JSON.stringify(
+            response.data
+          )}`
+        );
+      }
+
       return response;
     } catch (error) {
       if (error.response?.status === 403 && !isRetry) {
