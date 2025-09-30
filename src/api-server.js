@@ -126,6 +126,55 @@ import {
 
 let CONFIG = {}; // Make CONFIG exportable
 let PROMPT_LOG_FILENAME = ''; // Make PROMPT_LOG_FILENAME exportable
+const rateLimitState = new Map();
+
+function getClientIp(req) {
+    const forwardedFor = req.headers['x-forwarded-for'];
+    if (forwardedFor && typeof forwardedFor === 'string') {
+        const [firstIp] = forwardedFor.split(',');
+        if (firstIp) {
+            return firstIp.trim();
+        }
+    }
+    return req.socket?.remoteAddress || 'unknown';
+}
+
+function buildRateLimitKey(config, req) {
+    const baseKey = config.uuid || config.MODEL_PROVIDER || 'default';
+    if (config.RATE_LIMIT_PER_IP) {
+        return `${baseKey}:${getClientIp(req)}`;
+    }
+    return baseKey;
+}
+
+function enforceRateLimit(config, req, res) {
+    if (!config.RATE_LIMIT_ENABLED) {
+        return false;
+    }
+
+    const windowMs = config.RATE_LIMIT_WINDOW_MS ?? config.REQUEST_BASE_DELAY ?? 1000;
+    const maxRequests = config.RATE_LIMIT_MAX_REQUESTS ?? 1;
+    const key = buildRateLimitKey(config, req);
+    const now = Date.now();
+    const windowStart = now - windowMs;
+    let timestamps = rateLimitState.get(key) || [];
+    timestamps = timestamps.filter((ts) => ts > windowStart);
+
+    if (timestamps.length >= maxRequests) {
+        const retryAfterSeconds = Math.ceil(windowMs / 1000);
+        res.writeHead(429, {
+            'Content-Type': 'application/json',
+            'Retry-After': String(retryAfterSeconds),
+        });
+        res.end(JSON.stringify({ error: { message: 'Too Many Requests: Please slow down and try again.' } }));
+        console.warn(`[Rate Limit] Blocked request for key ${key}. ${timestamps.length} requests within ${windowMs}ms.`);
+        return true;
+    }
+
+    timestamps.push(now);
+    rateLimitState.set(key, timestamps);
+    return false;
+}
 
 /**
  * Initializes the server configuration from config.json and command-line arguments.
@@ -164,6 +213,10 @@ async function initializeConfig(args = process.argv.slice(2), configFilePath = '
             PROMPT_LOG_MODE: "none",
             REQUEST_MAX_RETRIES: 3,
             REQUEST_BASE_DELAY: 1000,
+            RATE_LIMIT_ENABLED: true,
+            RATE_LIMIT_MAX_REQUESTS: 1,
+            RATE_LIMIT_WINDOW_MS: 1000,
+            RATE_LIMIT_PER_IP: false,
             CRON_NEAR_MINUTES: 15,
             CRON_REFRESH_TOKEN: true,
             PROVIDER_POOLS_FILE_PATH: null // 新增号池配置文件路径
@@ -333,6 +386,19 @@ async function initializeConfig(args = process.argv.slice(2), configFilePath = '
                 console.warn(`[Config Warning] --provider-pools-file flag requires a value.`);
             }
         }
+    }
+
+    if (currentConfig.RATE_LIMIT_ENABLED === undefined) {
+        currentConfig.RATE_LIMIT_ENABLED = true;
+    }
+    if (!Number.isInteger(currentConfig.RATE_LIMIT_MAX_REQUESTS) || currentConfig.RATE_LIMIT_MAX_REQUESTS < 1) {
+        currentConfig.RATE_LIMIT_MAX_REQUESTS = 1;
+    }
+    if (!Number.isInteger(currentConfig.RATE_LIMIT_WINDOW_MS) || currentConfig.RATE_LIMIT_WINDOW_MS <= 0) {
+        currentConfig.RATE_LIMIT_WINDOW_MS = currentConfig.REQUEST_BASE_DELAY || 1000;
+    }
+    if (typeof currentConfig.RATE_LIMIT_PER_IP !== 'boolean') {
+        currentConfig.RATE_LIMIT_PER_IP = false;
     }
 
     if (!currentConfig.SYSTEM_PROMPT_FILE_PATH) {
@@ -580,6 +646,10 @@ function createRequestHandler(config) {
         if (!isAuthorized(req, requestUrl, currentConfig.REQUIRED_API_KEY)) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ error: { message: 'Unauthorized: API key is invalid or missing.' } }));
+        }
+
+        if (enforceRateLimit(currentConfig, req, res)) {
+            return;
         }
 
         try {
