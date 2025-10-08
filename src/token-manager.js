@@ -3,7 +3,6 @@
  * 增强的 Token 管理器，支持自动刷新和备用 token 机制
  */
 
-import * as fs from "fs";
 import * as path from "path";
 import { promises as pfs } from "fs";
 
@@ -84,7 +83,7 @@ export class TokenManager {
                 expiresAt: new Date(tokenData.expiresAt),
               });
             }
-          } catch (error) {
+          } catch {
             // 忽略无法解析的文件
             console.debug(
               `[Token Manager] Skipping invalid token file: ${file}`
@@ -225,12 +224,23 @@ export class TokenManager {
       if (newTokenData.clientIdHash) {
         kiroApiService.clientIdHash = newTokenData.clientIdHash;
       }
+      if (newTokenData.clientId) {
+        kiroApiService.clientId = newTokenData.clientId;
+      }
+      if (newTokenData.clientSecret) {
+        kiroApiService.clientSecret = newTokenData.clientSecret;
+      }
       if (newTokenData.authMethod) {
         kiroApiService.authMethod = newTokenData.authMethod;
       }
       if (newTokenData.region) {
         kiroApiService.region = newTokenData.region;
       }
+      if (newTokenData.provider) {
+        kiroApiService.provider = newTokenData.provider;
+      }
+      
+      console.log(`[Token Manager] Token updated - AuthMethod: ${newTokenData.authMethod}, Provider: ${newTokenData.provider || 'N/A'}`);
 
       console.log("[Token Manager] Successfully switched to new token");
 

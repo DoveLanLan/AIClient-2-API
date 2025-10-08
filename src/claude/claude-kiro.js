@@ -20,6 +20,7 @@ const KIRO_CONSTANTS = {
   CONTENT_TYPE_JSON: "application/json",
   ACCEPT_JSON: "application/json",
   AUTH_METHOD_SOCIAL: "social",
+  AUTH_METHOD_IDC: "IdC",
   CHAT_TRIGGER_TYPE_MANUAL: "MANUAL",
   ORIGIN_AI_EDITOR: "AI_EDITOR",
 };
@@ -146,7 +147,7 @@ function parseSingleToolCall(toolCallText) {
     );
     // Ensure string values are properly quoted if they contain special characters and are not already quoted
     repairedJson = repairedJson.replace(
-      /:\s*([a-zA-Z0-9_]+)(?=[,\}\]])/g,
+      /:\s*([a-zA-Z0-9_]+)(?=[,}\\]])/g,
       ':"$1"'
     );
 
@@ -330,7 +331,6 @@ export class KiroApiService {
         "user-agent": `aws-sdk-js/1.0.7 ua/2.1 os/win32#10.0.26100 lang/js md/nodejs#20.16.0 api/codewhispererstreaming#1.0.7 m/E KiroIDE-0.1.25-${macSha256}`,
         "amz-sdk-request": "attempt=1; max=1",
         "x-amzn-kiro-agent-mode": "vibe",
-        "Content-Type": KIRO_CONSTANTS.CONTENT_TYPE_JSON,
         Accept: KIRO_CONSTANTS.ACCEPT_JSON,
         // 添加连接保持头
         Connection: "keep-alive",
@@ -789,7 +789,8 @@ export class KiroApiService {
       };
     }
 
-    if (this.authMethod === KIRO_CONSTANTS.AUTH_METHOD_SOCIAL) {
+    // Add profileArn for social auth, skip for IdC/Enterprise
+    if (this.authMethod === KIRO_CONSTANTS.AUTH_METHOD_SOCIAL && this.profileArn) {
       request.profileArn = this.profileArn;
     }
 
@@ -835,7 +836,7 @@ export class KiroApiService {
               try {
                 const args = JSON.parse(currentToolCallDict.function.arguments);
                 currentToolCallDict.function.arguments = JSON.stringify(args);
-              } catch (e) {
+              } catch {
                 console.warn(
                   `Tool call arguments not valid JSON: ${currentToolCallDict.function.arguments}`
                 );
@@ -848,7 +849,7 @@ export class KiroApiService {
             fullContent += decodedContent;
           }
           break;
-        } catch (e) {
+        } catch {
           // 解析失败，说明这个 '}' 是内容的一部分，继续寻找下一个 '}'。
         }
       }
@@ -916,6 +917,17 @@ export class KiroApiService {
 
       return response;
     } catch (error) {
+      // Log detailed error information for debugging
+      if (error.response) {
+        console.error(`[Kiro] API Error ${error.response.status}:`, {
+          status: error.response.status,
+          statusText: error.response.statusText,
+          data: error.response.data,
+          authMethod: this.authMethod,
+          hasProfileArn: !!this.profileArn,
+        });
+      }
+      
       if (error.response?.status === 403 && !isRetry) {
         console.log(
           "[Kiro] Received 403. Attempting smart token refresh and retrying..."
