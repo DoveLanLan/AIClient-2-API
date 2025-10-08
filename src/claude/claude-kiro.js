@@ -464,6 +464,32 @@ export class KiroApiService {
         );
       }
 
+      // Priority 4: Load clientId and clientSecret from clientIdHash file if present
+      if (mergedCredentials.clientIdHash && (!mergedCredentials.clientId || !mergedCredentials.clientSecret)) {
+        const clientIdHashFile = path.join(this.credPath, `${mergedCredentials.clientIdHash}.json`);
+        console.debug(
+          `[Kiro Auth] Found clientIdHash, attempting to load client credentials from: ${clientIdHashFile}`
+        );
+        const clientCredentials = await loadCredentialsFromFile(clientIdHashFile);
+        if (clientCredentials) {
+          if (clientCredentials.clientId && clientCredentials.clientSecret) {
+            mergedCredentials.clientId = clientCredentials.clientId;
+            mergedCredentials.clientSecret = clientCredentials.clientSecret;
+            console.info(
+              `[Kiro Auth] Successfully loaded clientId and clientSecret from ${mergedCredentials.clientIdHash}.json`
+            );
+          } else {
+            console.warn(
+              `[Kiro Auth] Client credentials file exists but missing clientId or clientSecret: ${clientIdHashFile}`
+            );
+          }
+        } else {
+          console.warn(
+            `[Kiro Auth] Could not load client credentials from clientIdHash file: ${clientIdHashFile}`
+          );
+        }
+      }
+
       // console.log('[Kiro Auth] Merged credentials:', mergedCredentials);
       // Apply loaded credentials, prioritizing existing values if they are not null/undefined
       this.accessToken = this.accessToken || mergedCredentials.accessToken;
@@ -474,6 +500,7 @@ export class KiroApiService {
       this.expiresAt = this.expiresAt || mergedCredentials.expiresAt;
       this.profileArn = this.profileArn || mergedCredentials.profileArn;
       this.region = this.region || mergedCredentials.region;
+      this.clientIdHash = this.clientIdHash || mergedCredentials.clientIdHash;
 
       // Ensure region is set before using it in URLs
       if (!this.region) {

@@ -239,6 +239,9 @@ export class TokenManager {
       if (newTokenData.provider) {
         kiroApiService.provider = newTokenData.provider;
       }
+      if (newTokenData.clientIdHash) {
+        kiroApiService.clientIdHash = newTokenData.clientIdHash;
+      }
       
       console.log(`[Token Manager] Token updated - AuthMethod: ${newTokenData.authMethod}, Provider: ${newTokenData.provider || 'N/A'}`);
 
