@@ -466,7 +466,9 @@ export class KiroApiService {
 
       // Priority 4: Load clientId and clientSecret from clientIdHash file if present
       if (mergedCredentials.clientIdHash && (!mergedCredentials.clientId || !mergedCredentials.clientSecret)) {
-        const clientIdHashFile = path.join(this.credPath, `${mergedCredentials.clientIdHash}.json`);
+        // Use the same directory as the main token file if a specific path was configured
+        const hashFileDir = this.credsFilePath ? path.dirname(this.credsFilePath) : this.credPath;
+        const clientIdHashFile = path.join(hashFileDir, `${mergedCredentials.clientIdHash}.json`);
         console.debug(
           `[Kiro Auth] Found clientIdHash, attempting to load client credentials from: ${clientIdHashFile}`
         );
