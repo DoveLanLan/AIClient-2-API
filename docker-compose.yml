@@ -10,7 +10,7 @@ services:
       - TZ=Asia/Shanghai
       - ARGS=--model-provider claude-kiro-oauth --api-key 123456 --host 0.0.0.0 --port 3000 --kiro-oauth-creds-file /app/.aws/sso/cache/kiro-auth-token.json
     volumes:
-      - ${HOME}/.aws/sso/cache:/app/.aws/sso/cache:rw
+      - ${AWS_SSO_CACHE_DIR:-${HOME}/.aws/sso/cache}:/app/.aws/sso/cache:rw
       - /etc/localtime:/etc/localtime:ro
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
