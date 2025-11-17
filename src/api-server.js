@@ -122,11 +122,116 @@ import {
     handleModelListRequest,
     handleContentGenerationRequest,
     handleError,
+    getRequestBody,
 } from './common.js';
 
 let CONFIG = {}; // Make CONFIG exportable
 let PROMPT_LOG_FILENAME = ''; // Make PROMPT_LOG_FILENAME exportable
 const rateLimitState = new Map();
+const DEFAULT_RATE_LIMIT_IGNORED_PATHS = [
+    '/v1/messages/count_tokens',
+    '/v1/messages',
+    '/v1/messages/stream'
+];
+
+function getNormalizedRequestPath(req) {
+    if (!req || !req.url) {
+        return '/';
+    }
+    try {
+        const host = req.headers?.host || 'localhost';
+        const parsed = new URL(req.url, `http://${host}`);
+        return parsed.pathname || '/';
+    } catch (error) {
+        const qIndex = req.url.indexOf('?');
+        return qIndex >= 0 ? req.url.substring(0, qIndex) : req.url;
+    }
+}
+
+function shouldBypassRateLimit(config, req) {
+    if (!config.RATE_LIMIT_IGNORE_PATHS || config.RATE_LIMIT_IGNORE_PATHS.length === 0) {
+        // Even without explicit ignore list, bypass Kiro message endpoints to avoid IDE bursts being throttled
+        const requestPath = getNormalizedRequestPath(req);
+        if (config.MODEL_PROVIDER === MODEL_PROVIDER.CLAUDE_KIRO_OAUTH && requestPath.startsWith('/v1/messages')) {
+            return true;
+        }
+        return false;
+    }
+    const requestPath = getNormalizedRequestPath(req);
+    return config.RATE_LIMIT_IGNORE_PATHS.some((ignorePath) => {
+        if (!ignorePath) {
+            return false;
+        }
+        if (requestPath === ignorePath) {
+            return true;
+        }
+        return requestPath.endsWith(ignorePath);
+    });
+}
+
+function collectClaudeMessageSegments(messages = []) {
+    const segments = [];
+    for (const message of messages) {
+        if (!message) continue;
+        const content = message.content;
+        if (typeof content === 'string') {
+            segments.push(content);
+            continue;
+        }
+        if (Array.isArray(content)) {
+            for (const part of content) {
+                if (!part) continue;
+                if (typeof part === 'string') {
+                    segments.push(part);
+                } else if (typeof part.text === 'string') {
+                    segments.push(part.text);
+                } else if (typeof part.input_text === 'string') {
+                    segments.push(part.input_text);
+                } else if (typeof part.content === 'string') {
+                    segments.push(part.content);
+                }
+            }
+            continue;
+        }
+        if (content && typeof content.text === 'string') {
+            segments.push(content.text);
+        } else if (content && typeof content.input_text === 'string') {
+            segments.push(content.input_text);
+        }
+    }
+    return segments;
+}
+
+function estimateClaudeInputTokens(messages = []) {
+    const segments = collectClaudeMessageSegments(messages);
+    const combinedText = segments.join(' ');
+    const trimmed = combinedText.trim();
+    const charCount = combinedText.length;
+    const wordCount = trimmed ? trimmed.split(/\s+/).length : 0;
+    const baseTokens = messages.length * 4 + 20;
+    const charTokens = Math.ceil(charCount / 4);
+    const wordTokens = Math.ceil(wordCount * 1.1);
+    const estimated = Math.max(1, baseTokens + Math.max(charTokens, wordTokens));
+    return { estimated, charCount, wordCount };
+}
+
+async function handleClaudeCountTokensRequest(req, res) {
+    try {
+        const body = await getRequestBody(req);
+        const messages = Array.isArray(body?.messages) ? body.messages : [];
+        const { estimated } = estimateClaudeInputTokens(messages);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            input_tokens: estimated,
+            model: body?.model || null,
+            estimated: true,
+        }));
+    } catch (error) {
+        console.error(`[Count Tokens] Failed to process request: ${error.message}`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: `Failed to estimate tokens: ${error.message}` } }));
+    }
+}
 
 function getClientIp(req) {
     const forwardedFor = req.headers['x-forwarded-for'];
@@ -149,6 +254,10 @@ function buildRateLimitKey(config, req) {
 
 function enforceRateLimit(config, req, res) {
     if (!config.RATE_LIMIT_ENABLED) {
+        return false;
+    }
+
+    if (shouldBypassRateLimit(config, req)) {
         return false;
     }
 
@@ -213,9 +322,9 @@ async function initializeConfig(args = process.argv.slice(2), configFilePath = '
             PROMPT_LOG_MODE: "none",
             REQUEST_MAX_RETRIES: 3,
             REQUEST_BASE_DELAY: 1000,
-            RATE_LIMIT_ENABLED: true,
-            RATE_LIMIT_MAX_REQUESTS: 1,
-            RATE_LIMIT_WINDOW_MS: 1000,
+            RATE_LIMIT_ENABLED: false,
+            RATE_LIMIT_MAX_REQUESTS: 5,
+            RATE_LIMIT_WINDOW_MS: 2000,
             RATE_LIMIT_PER_IP: false,
             CRON_NEAR_MINUTES: 15,
             CRON_REFRESH_TOKEN: true,
@@ -399,6 +508,15 @@ async function initializeConfig(args = process.argv.slice(2), configFilePath = '
     }
     if (typeof currentConfig.RATE_LIMIT_PER_IP !== 'boolean') {
         currentConfig.RATE_LIMIT_PER_IP = false;
+    }
+    if (!Array.isArray(currentConfig.RATE_LIMIT_IGNORE_PATHS)) {
+        currentConfig.RATE_LIMIT_IGNORE_PATHS = [...DEFAULT_RATE_LIMIT_IGNORED_PATHS];
+    } else {
+        for (const ignoredPath of DEFAULT_RATE_LIMIT_IGNORED_PATHS) {
+            if (!currentConfig.RATE_LIMIT_IGNORE_PATHS.includes(ignoredPath)) {
+                currentConfig.RATE_LIMIT_IGNORE_PATHS.push(ignoredPath);
+            }
+        }
     }
 
     if (!currentConfig.SYSTEM_PROMPT_FILE_PATH) {
@@ -665,6 +783,9 @@ function createRequestHandler(config) {
 
             // Route content generation requests
             if (method === 'POST') {
+                if (path === '/v1/messages/count_tokens') {
+                    return await handleClaudeCountTokensRequest(req, res);
+                }
                 if (path === '/v1/chat/completions') {
                     return await handleContentGenerationRequest(req, res, apiService, ENDPOINT_TYPE.OPENAI_CHAT, currentConfig, PROMPT_LOG_FILENAME, providerPoolManager, currentConfig.uuid);
                 }
