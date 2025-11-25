@@ -26,8 +26,6 @@ const KIRO_CONSTANTS = {
 };
 
 const MODEL_MAPPING = {
-  "claude-opus-4-5-20251125": "CLAUDE_OPUS_4_5_20251125_V1_0",
-  "claude-sonnet-4-5-20250929": "CLAUDE_SONNET_4_5_20250929_V1_0",
   "claude-sonnet-4-20250514": "CLAUDE_SONNET_4_20250514_V1_0",
   "claude-3-7-sonnet-20250219": "CLAUDE_3_7_SONNET_20250219_V1_0",
   "amazonq-claude-sonnet-4-20250514": "CLAUDE_SONNET_4_20250514_V1_0",
@@ -403,6 +401,24 @@ export class KiroApiService {
       }
     };
 
+    const buildMetadataPayload = () => {
+      const metadata = {};
+      const keysToPersist = [
+        "authMethod",
+        "clientId",
+        "clientSecret",
+        "clientIdHash",
+        "profileArn",
+        "region",
+      ];
+      for (const key of keysToPersist) {
+        if (this[key]) {
+          metadata[key] = this[key];
+        }
+      }
+      return metadata;
+    };
+
     try {
       let mergedCredentials = {};
 
@@ -494,6 +510,31 @@ export class KiroApiService {
         }
       }
 
+      // Attempt to infer auth method when it's missing so requests stay valid
+      if (!mergedCredentials.authMethod) {
+        if (mergedCredentials.clientId && mergedCredentials.clientSecret) {
+          mergedCredentials.authMethod = KIRO_CONSTANTS.AUTH_METHOD_IDC;
+          console.info(
+            "[Kiro Auth] Inferred IdC authMethod because clientId/clientSecret are present."
+          );
+        } else if (mergedCredentials.profileArn) {
+          mergedCredentials.authMethod = KIRO_CONSTANTS.AUTH_METHOD_SOCIAL;
+          console.info(
+            "[Kiro Auth] Inferred social authMethod because profileArn is present."
+          );
+        } else if (this.config.KIRO_DEFAULT_AUTH_METHOD) {
+          mergedCredentials.authMethod = this.config.KIRO_DEFAULT_AUTH_METHOD;
+          console.info(
+            `[Kiro Auth] Falling back to configured default authMethod: ${this.config.KIRO_DEFAULT_AUTH_METHOD}`
+          );
+        } else {
+          console.warn(
+            "[Kiro Auth] authMethod missing and could not be inferred. Defaulting to social; please update credentials if incorrect."
+          );
+          mergedCredentials.authMethod = KIRO_CONSTANTS.AUTH_METHOD_SOCIAL;
+        }
+      }
+
       // console.log('[Kiro Auth] Merged credentials:', mergedCredentials);
       // Apply loaded credentials, prioritizing existing values if they are not null/undefined
       this.accessToken = this.accessToken || mergedCredentials.accessToken;
@@ -527,6 +568,11 @@ export class KiroApiService {
         "{{region}}",
         this.region
       );
+
+      const metadataToPersist = buildMetadataPayload();
+      if (credPath && Object.keys(metadataToPersist).length > 0) {
+        await saveCredentialsToFile(credPath, metadataToPersist);
+      }
     } catch (error) {
       console.warn(
         `[Kiro Auth] Error during credential loading: ${error.message}`
@@ -571,17 +617,14 @@ export class KiroApiService {
           console.info("[Kiro Auth] Access token refreshed successfully");
 
           // Update the token file - use specified path if configured, otherwise use default
-          const tokenFilePath =
-            this.credsFilePath ||
-            path.join(this.credPath, KIRO_AUTH_TOKEN_FILE);
+          const tokenFilePath = credPath;
+          const metadataToPersist = buildMetadataPayload();
           const updatedTokenData = {
             accessToken: this.accessToken,
             refreshToken: this.refreshToken,
             expiresAt: expiresAt,
+            ...metadataToPersist,
           };
-          if (this.profileArn) {
-            updatedTokenData.profileArn = this.profileArn;
-          }
           await saveCredentialsToFile(tokenFilePath, updatedTokenData);
         } else {
           throw new Error("Invalid refresh response: Missing accessToken");
@@ -634,10 +677,32 @@ export class KiroApiService {
     const conversationId = uuidv4();
 
     let systemPrompt = this.getContentText(inSystemPrompt);
-    const processedMessages = messages;
+    const processedMessages = Array.isArray(messages) ? [...messages] : [];
 
     if (processedMessages.length === 0) {
       throw new Error("No user messages found");
+    }
+
+    // Ensure the last message is a user turn; some clients send trailing assistant
+    // echoes which cause Kiro to reject the request.
+    if (processedMessages[processedMessages.length - 1].role !== "user") {
+      let lastUserIndex = -1;
+      for (let i = processedMessages.length - 1; i >= 0; i--) {
+        if (processedMessages[i].role === "user") {
+          lastUserIndex = i;
+          break;
+        }
+      }
+      if (lastUserIndex === -1) {
+        throw new Error(
+          "Could not find a user message in the request. Please ensure messages include at least one user turn."
+        );
+      }
+      const [lastUserMessage] = processedMessages.splice(lastUserIndex, 1);
+      processedMessages.push(lastUserMessage);
+      console.warn(
+        `[Kiro] Last message role was not 'user'. Reordered conversation to use the most recent user message at index ${lastUserIndex} as the current turn.`
+      );
     }
 
     const codewhispererModel =
@@ -958,7 +1023,7 @@ export class KiroApiService {
           hasProfileArn: !!this.profileArn,
         });
       }
-      
+
       if (error.response?.status === 403 && !isRetry) {
         console.log(
           "[Kiro] Received 403. Attempting smart token refresh and retrying..."
@@ -979,8 +1044,7 @@ export class KiroApiService {
       if (error.response?.status === 429 && retryCount < maxRetries) {
         const delay = baseDelay * Math.pow(2, retryCount);
         console.log(
-          `[Kiro] Received 429 (Too Many Requests). Retrying in ${delay}ms... (attempt ${
-            retryCount + 1
+          `[Kiro] Received 429 (Too Many Requests). Retrying in ${delay}ms... (attempt ${retryCount + 1
           }/${maxRetries})`
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -995,10 +1059,8 @@ export class KiroApiService {
       ) {
         const delay = baseDelay * Math.pow(2, retryCount);
         console.log(
-          `[Kiro] Received ${
-            error.response.status
-          } server error. Retrying in ${delay}ms... (attempt ${
-            retryCount + 1
+          `[Kiro] Received ${error.response.status
+          } server error. Retrying in ${delay}ms... (attempt ${retryCount + 1
           }/${maxRetries})`
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -1009,10 +1071,8 @@ export class KiroApiService {
       if (this.isNetworkError(error) && retryCount < maxRetries) {
         const delay = baseDelay * Math.pow(2, retryCount);
         console.log(
-          `[Kiro] Network connection error: ${
-            error.message
-          }. Retrying in ${delay}ms... (attempt ${
-            retryCount + 1
+          `[Kiro] Network connection error: ${error.message
+          }. Retrying in ${delay}ms... (attempt ${retryCount + 1
           }/${maxRetries})`
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -1355,8 +1415,7 @@ export class KiroApiService {
         currentTime.getTime() + cronNearMinutesInMillis
       );
       console.log(
-        `[Kiro] Expiry date: ${expirationTime.getTime()}, Current time: ${currentTime.getTime()}, ${
-          this.config.CRON_NEAR_MINUTES || 10
+        `[Kiro] Expiry date: ${expirationTime.getTime()}, Current time: ${currentTime.getTime()}, ${this.config.CRON_NEAR_MINUTES || 10
         } minutes from now: ${thresholdTime.getTime()}`
       );
       return expirationTime.getTime() <= thresholdTime.getTime();
