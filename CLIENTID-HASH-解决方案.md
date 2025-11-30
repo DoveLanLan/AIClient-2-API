@@ -1,5 +1,8 @@
 # Kiro ClientIdHash 问题解决方案
 
+
+
+
 ## 问题描述
 
 你的 `kiro-auth-token.json` 文件中缺少 `clientId` 和 `clientSecret`，但这些值存在于 `~/.aws/sso/cache` 目录下的另一个 JSON 文件中。
