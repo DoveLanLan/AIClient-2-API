@@ -289,7 +289,7 @@ export class TokenManager {
         expiresAt: t.expiresAt.toISOString(),
         isExpired: t.isExpired,
         isExpiringSoon: t.isExpiringSoon,
-        status: t.isExpired
+        status: t.isExpireddock
           ? "expired"
           : t.isExpiringSoon
           ? "expiring-soon"

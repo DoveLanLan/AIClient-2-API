@@ -316,6 +316,16 @@ export class KiroApiServiceAdapter extends ApiServiceAdapter {
     return this.kiroApiService.listModels();
   }
 
+  async getModelAccessStatus(modelsToCheck) {
+    if (!this.kiroApiService.isInitialized) {
+      console.warn(
+        "kiroApiService not initialized, attempting to re-initialize..."
+      );
+      await this.kiroApiService.initialize();
+    }
+    return this.kiroApiService.getModelAccessStatus(modelsToCheck);
+  }
+
   async refreshToken() {
     if (this.kiroApiService.isExpiryDateNear() === true) {
       console.log(

@@ -1,6 +1,7 @@
 import {
     handleModelListRequest,
     handleContentGenerationRequest,
+    handleModelAccessRequest,
     API_ACTIONS,
     ENDPOINT_TYPE
 } from './common.js';
@@ -29,6 +30,10 @@ export async function handleAPIRequests(method, path, req, res, currentConfig, a
         }
         if (path === '/v1beta/models') {
             await handleModelListRequest(req, res, apiService, ENDPOINT_TYPE.GEMINI_MODEL_LIST, currentConfig, providerPoolManager, currentConfig.uuid);
+            return true;
+        }
+        if (path === '/model-access') {
+            await handleModelAccessRequest(req, res, apiService, currentConfig);
             return true;
         }
     }

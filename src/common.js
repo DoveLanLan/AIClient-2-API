@@ -352,6 +352,42 @@ export async function handleModelListRequest(req, res, service, endpointType, CO
 }
 
 /**
+ * Handle diagnostic requests that validate which backend models are actually accessible
+ * with the currently configured credentials. Some providers (such as Kiro) override this
+ * method to perform lightweight content requests that surface authorization errors
+ * without requiring the caller to manually test every model.
+ *
+ * Request format example: GET /claude-kiro-oauth/model-access?models=claude-opus-4-5,claude-haiku-4-5
+ */
+export async function handleModelAccessRequest(req, res, service, currentConfig) {
+    if (!service || typeof service.getModelAccessStatus !== 'function') {
+        res.writeHead(501, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            error: {
+                message: `Model access diagnostics are not implemented for provider '${currentConfig.MODEL_PROVIDER}'.`
+            }
+        }));
+        return;
+    }
+
+    try {
+        const baseHost = req.headers?.host || 'localhost';
+        const requestUrl = new URL(req.url, `http://${baseHost}`);
+        const modelsParam = requestUrl.searchParams.get('models');
+        const modelsToCheck = modelsParam
+            ? modelsParam.split(',').map(model => model.trim()).filter(Boolean)
+            : undefined;
+
+        const accessReport = await service.getModelAccessStatus(modelsToCheck);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(accessReport));
+    } catch (error) {
+        console.error('[Model Access] Failed to build access report:', error.message);
+        handleError(res, error);
+    }
+}
+
+/**
  * Handles requests for content generation (both unary and streaming). This function
  * orchestrates request body parsing, conversion to the internal Gemini format,
  * logging, and dispatching to the appropriate stream or unary handler.
