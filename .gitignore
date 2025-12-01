@@ -3,3 +3,5 @@ config.json
 .serena/
 .claude/
 CLAUDE.md
+.DS_Store
+fetch_system_prompt.txt
