@@ -27,7 +27,8 @@ const KIRO_MODELS = getProviderModels('claude-kiro-oauth');
 
 // 完整的模型映射表
 const FULL_MODEL_MAPPING = {
-  'claude-opus-4-5-20251101': 'claude-opus-4.5-20251101',
+  'claude-opus-4-5-20251125': 'CLAUDE_OPUS_4_5_20251125_V1_0',
+  'claude-opus-4-5-20251101': 'CLAUDE_OPUS_4_5_20251101_V1_0',
   "claude-opus-4-5": "claude-opus-4.5",
   "claude-haiku-4-5": "claude-haiku-4.5",
   "claude-sonnet-4-5": "CLAUDE_SONNET_4_5_20250929_V1_0",
@@ -971,17 +972,17 @@ export class KiroApiService {
       body.system
     );
 
+    // 当 model 以 kiro-amazonq 开头时，使用 amazonQUrl，否则使用 baseUrl
+    const requestUrl = model.startsWith("amazonq")
+      ? this.amazonQUrl
+      : this.baseUrl;
+
     try {
       const token = this.accessToken; // Use the already initialized token
       const headers = {
         Authorization: `Bearer ${token}`,
         "amz-sdk-invocation-id": `${uuidv4()}`,
       };
-
-      // 当 model 以 kiro-amazonq 开头时，使用 amazonQUrl，否则使用 baseUrl
-      const requestUrl = model.startsWith("amazonq")
-        ? this.amazonQUrl
-        : this.baseUrl;
       const response = await this.axiosInstance.post(requestUrl, requestData, {
         headers,
       });
