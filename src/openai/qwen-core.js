@@ -6,15 +6,17 @@ import * as os from 'os';
 import open from 'open';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'node:crypto';
+import { getProviderModels } from '../provider-models.js';
 
 // --- Constants ---
 const QWEN_DIR = '.qwen';
 const QWEN_CREDENTIAL_FILENAME = 'oauth_creds.json';
-const QWEN_LOCK_FILENAME = 'oauth_creds.lock';
-const QWEN_MODEL_LIST = [
-    { id: 'qwen3-coder-plus', name: 'Qwen3 Coder Plus' },
-    { id: 'qwen3-coder-flash', name: 'Qwen3 Coder Flash' },
-];
+// 从 provider-models.js 获取支持的模型列表
+const QWEN_MODELS = getProviderModels('openai-qwen-oauth');
+const QWEN_MODEL_LIST = QWEN_MODELS.map(id => ({
+    id: id,
+    name: id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+}));
 
 const TOKEN_REFRESH_BUFFER_MS = 30 * 1000;
 const LOCK_TIMEOUT_MS = 10000;
@@ -44,6 +46,50 @@ export const qwenOAuth2Events = new EventEmitter();
 
 
 // --- Helper Functions ---
+
+// 封装公共的 await fetch 方法
+async function commonFetch(url, options = {}, useSystemProxy = false) {
+    const defaultOptions = {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+        },
+    };
+
+    // 合并默认选项和传入的选项
+    const mergedOptions = {
+        ...defaultOptions,
+        ...options,
+        headers: {
+            ...defaultOptions.headers,
+            ...options.headers,
+        },
+    };
+
+    // 如果不使用系统代理,设置空的代理配置
+    // 注意: Node.js 的 fetch 实现会自动使用环境变量中的代理设置
+    // 这里通过设置 agent 为 null 来尝试禁用代理
+    if (!useSystemProxy && typeof mergedOptions.agent === 'undefined') {
+        // 对于 Node.js fetch,我们可以通过设置 dispatcher 来控制代理
+        // 但这需要 undici 支持,这里我们先记录日志
+        console.debug('[Qwen] System proxy disabled for fetch request');
+    }
+
+    const response = await fetch(url, mergedOptions);
+
+    // 检查响应是否成功
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const error = new Error(`HTTP ${response.status}: ${response.statusText}`);
+        error.status = response.status;
+        error.data = errorData;
+        throw error;
+    }
+
+    // 返回 JSON 响应
+    return await response.json();
+}
 
 function generateCodeVerifier() {
     return crypto.randomBytes(32).toString('base64url');
@@ -109,6 +155,18 @@ export class TokenManagerError extends Error {
     }
 }
 
+/**
+ * 自定义错误类,用于指示需要清除凭证
+ * 当令牌刷新时发生 400 错误时抛出,表示刷新令牌已过期或无效
+ */
+export class CredentialsClearRequiredError extends Error {
+    constructor(message, originalError) {
+        super(message);
+        this.name = 'CredentialsClearRequiredError';
+        this.originalError = originalError;
+    }
+}
+
 
 // --- Core Service Class ---
 
@@ -116,9 +174,12 @@ export class QwenApiService {
     constructor(config) {
         this.config = config;
         this.isInitialized = false;
-        this.qwenClient = new QwenOAuth2Client();
         this.sharedManager = SharedTokenManager.getInstance();
         this.currentAxiosInstance = null;
+        this.tokenManagerOptions = { credentialFilePath: this._getQwenCachedCredentialPath() };
+        this.useSystemProxy = config?.USE_SYSTEM_PROXY_QWEN ?? false;
+        console.log(`[Qwen] System proxy ${this.useSystemProxy ? 'enabled' : 'disabled'}`);
+        this.qwenClient = new QwenOAuth2Client(config, this.useSystemProxy);
     }
 
     async initialize() {
@@ -126,13 +187,21 @@ export class QwenApiService {
         console.log('[Qwen] Initializing Qwen API Service...');
         await this._initializeAuth();
         
-        this.currentAxiosInstance = axios.create({
+        const axiosConfig = {
             baseURL: DEFAULT_QWEN_BASE_URL,
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer `,
             },
-        });
+
+        };
+        
+        // 禁用系统代理
+        if (!this.useSystemProxy) {
+            axiosConfig.proxy = false;
+        }
+        
+        this.currentAxiosInstance = axios.create(axiosConfig);
 
         this.isInitialized = true;
         console.log('[Qwen] Initialization complete.');
@@ -140,7 +209,11 @@ export class QwenApiService {
 
     async _initializeAuth(forceRefresh = false) {
         try {
-            const credentials = await this.sharedManager.getValidCredentials(this.qwenClient, forceRefresh);
+            const credentials = await this.sharedManager.getValidCredentials(
+                this.qwenClient,
+                forceRefresh,
+                this.tokenManagerOptions,
+            );
             // console.log('credentials', credentials);
             this.qwenClient.setCredentials(credentials);
         } catch (error) {
@@ -162,14 +235,13 @@ export class QwenApiService {
                 }
             }
 
+            // If cached credentials are present and still valid, use them directly.
             if (await this._loadCachedQwenCredentials(this.qwenClient)) {
-                const result = await this._authWithQwenDeviceFlow(this.qwenClient, this.config);
-                if (!result.success) {
-                    throw new Error('Qwen OAuth authentication failed');
-                }
+                console.log('[Qwen] Using cached OAuth credentials.');
                 return;
             }
 
+            // Otherwise, run device authorization flow to obtain fresh credentials.
             const result = await this._authWithQwenDeviceFlow(this.qwenClient, this.config);
             if (!result.success) {
                 if (result.reason === 'timeout') {
@@ -310,7 +382,7 @@ export class QwenApiService {
 
     _getQwenCachedCredentialPath() {
         if (this.config && this.config.QWEN_OAUTH_CREDS_FILE_PATH) {
-            return this.config.QWEN_OAUTH_CREDS_FILE_PATH;
+            return path.resolve(this.config.QWEN_OAUTH_CREDS_FILE_PATH);
         }
         return path.join(os.homedir(), QWEN_DIR, QWEN_CREDENTIAL_FILENAME);
     }
@@ -321,8 +393,10 @@ export class QwenApiService {
             const creds = await fs.readFile(keyFile, 'utf-8');
             const credentials = JSON.parse(creds);
             client.setCredentials(credentials);
-            const { token } = await client.getAccessToken();
-            return !!token;
+            // Consider credentials usable only if access_token exists and not near expiry
+            const hasToken = !!credentials?.access_token;
+            const notExpired = !!credentials?.expiry_date && (Date.now() < credentials.expiry_date - TOKEN_REFRESH_BUFFER_MS);
+            return hasToken && notExpired;
         } catch (_) {
             return false;
         }
@@ -368,7 +442,11 @@ export class QwenApiService {
 
     async getValidToken() {
         try {
-            const credentials = await this.sharedManager.getValidCredentials(this.qwenClient);
+            const credentials = await this.sharedManager.getValidCredentials(
+                this.qwenClient,
+                false,
+                this.tokenManagerOptions,
+            );
             if (!credentials.access_token) throw new Error('No access token available');
             return {
                 token: credentials.access_token,
@@ -416,27 +494,39 @@ export class QwenApiService {
         const maxRetries = (this.config && this.config.REQUEST_MAX_RETRIES) || 3;
         const baseDelay = (this.config && this.config.REQUEST_BASE_DELAY) || 1000;
 
-        const version = "0.0.9";
+        const version = "0.2.1";
         const userAgent = `QwenCode/${version} (${process.platform}; ${process.arch})`;
         console.log(`[QwenApiService] User-Agent: ${userAgent}`);
 
         try {
             const { token, endpoint: qwenBaseUrl } = await this.getValidToken();
 
-            this.currentAxiosInstance = axios.create({
+            const axiosConfig = {
                 baseURL: qwenBaseUrl,
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` ,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
                     'X-DashScope-CacheControl': 'enable',
                     'X-DashScope-UserAgent': userAgent,
                     'X-DashScope-AuthType': 'qwen-oauth',
                 },
-            });
+                // 添加 HTTPS 代理修复相关配置
+                httpsAgent: undefined, // axios-https-proxy-fix 会自动处理
+            };
+            
+            // 禁用系统代理
+            if (!this.useSystemProxy) {
+                axiosConfig.proxy = false;
+            }
+            
+            this.currentAxiosInstance = axios.create(axiosConfig);
 
             // Process message content before sending the request
             const processedBody = body;//this.processMessageContent(body);
 
             // Check if model in body is in QWEN_MODEL_LIST, if not, use the first model's id
             if (processedBody.model && !QWEN_MODEL_LIST.some(model => model.id === processedBody.model)) {
+                console.warn(`[QwenApiService] Model '${processedBody.model}' not found. Using default model: '${QWEN_MODEL_LIST[0].id}'`);
                 processedBody.model = QWEN_MODEL_LIST[0].id;
             }
 
@@ -464,7 +554,11 @@ export class QwenApiService {
             if (this.isAuthError(error) && retryCount === 0) {
                 console.warn(`[QwenApiService] Auth error (${status}). Refreshing token...`);
                 try {
-                    await this.sharedManager.getValidCredentials(this.qwenClient, true);
+                    await this.sharedManager.getValidCredentials(
+                        this.qwenClient,
+                        true,
+                        this.tokenManagerOptions,
+                    );
                     return this.callApiWithAuthAndRetry(endpoint, body, isStream, retryCount + 1);
                 } catch (refreshError) {
                     console.error(`[QwenApiService] Token refresh failed:`, refreshError);
@@ -526,6 +620,7 @@ export class QwenApiService {
             }
             const currentTime = Date.now();
             const cronNearMinutesInMillis = (this.config.CRON_NEAR_MINUTES || 10) * 60 * 1000;
+            console.log(`[Qwen] Expiry date: ${credentials.expiry_date}, Current time: ${currentTime}, ${this.config.CRON_NEAR_MINUTES || 10} minutes from now: ${currentTime + cronNearMinutesInMillis}`);
             return credentials.expiry_date <= (currentTime + cronNearMinutesInMillis);
         } catch (error) {
             console.error(`[Qwen] Error checking expiry date: ${error.message}`);
@@ -539,13 +634,13 @@ export class QwenApiService {
 
 class SharedTokenManager {
     static instance = null;
-    memoryCache = { credentials: null, fileModTime: 0, lastCheck: 0 };
-    refreshPromise = null;
-    cleanupHandlersRegistered = false;
-    cleanupFunction = null;
-    lockConfig = DEFAULT_LOCK_CONFIG;
 
     constructor() {
+        this.contexts = new Map();
+        this.lockPaths = new Set();
+        this.cleanupHandlersRegistered = false;
+        this.cleanupFunction = null;
+        this.sigintHandler = null;
         this.registerCleanupHandlers();
     }
 
@@ -556,13 +651,49 @@ class SharedTokenManager {
         return SharedTokenManager.instance;
     }
 
+    getContext(options = {}) {
+        const credentialFilePath = this.resolveCredentialFilePath(options.credentialFilePath);
+        const lockFilePath = this.resolveLockFilePath(credentialFilePath, options.lockFilePath);
+        let context = this.contexts.get(credentialFilePath);
+        if (!context) {
+            context = {
+                credentialFilePath,
+                lockFilePath,
+                lockConfig: options.lockConfig || DEFAULT_LOCK_CONFIG,
+                memoryCache: { credentials: null, fileModTime: 0, lastCheck: 0 },
+                refreshPromise: null,
+            };
+            this.contexts.set(credentialFilePath, context);
+            this.lockPaths.add(lockFilePath);
+        } else if (options.lockConfig) {
+            context.lockConfig = options.lockConfig;
+        }
+        return context;
+    }
+
+    resolveCredentialFilePath(customPath) {
+        if (customPath) {
+            return path.resolve(customPath);
+        }
+        return path.join(os.homedir(), QWEN_DIR, QWEN_CREDENTIAL_FILENAME);
+    }
+
+    resolveLockFilePath(credentialFilePath, customLockPath) {
+        if (customLockPath) {
+            return path.resolve(customLockPath);
+        }
+        return `${credentialFilePath}.lock`;
+    }
+
     registerCleanupHandlers() {
         if (this.cleanupHandlersRegistered) return;
         this.cleanupFunction = () => {
-            try { unlinkSync(this.getLockFilePath()); } catch (_error) { /* Ignore */ }
+            for (const lockPath of this.lockPaths) {
+                try { unlinkSync(lockPath); } catch (_error) { /* ignore */ }
+            }
         };
         this.sigintHandler = () => {
-            try { unlinkSync(this.getLockFilePath()); } catch (_error) { /* Ignore */ }
+            this.cleanupFunction();
             process.exit(0);
         };
         process.on('exit', this.cleanupFunction);
@@ -570,70 +701,81 @@ class SharedTokenManager {
         this.cleanupHandlersRegistered = true;
     }
 
-    async getValidCredentials(qwenClient, forceRefresh = false) {
+    async getValidCredentials(qwenClient, forceRefresh = false, options = {}) {
+        const context = this.getContext(options);
         try {
-            await this.checkAndReloadIfNeeded();
-            if (!forceRefresh && this.memoryCache.credentials && this.isTokenValid(this.memoryCache.credentials)) {
-                return this.memoryCache.credentials;
+            await this.checkAndReloadIfNeeded(context);
+            if (!forceRefresh && context.memoryCache.credentials && this.isTokenValid(context.memoryCache.credentials)) {
+                return context.memoryCache.credentials;
             }
-            if (this.refreshPromise) return this.refreshPromise;
-            
-            qwenClient.setCredentials(this.memoryCache.credentials);
-            this.refreshPromise = this.performTokenRefresh(qwenClient, forceRefresh);
-            const credentials = await this.refreshPromise;
-            this.refreshPromise = null;
+            if (context.refreshPromise) {
+                return context.refreshPromise;
+            }
+
+            qwenClient.setCredentials(context.memoryCache.credentials);
+            context.refreshPromise = this.performTokenRefresh(context, qwenClient, forceRefresh);
+            const credentials = await context.refreshPromise;
+            context.refreshPromise = null;
             return credentials;
         } catch (error) {
-            this.refreshPromise = null;
+            context.refreshPromise = null;
             if (error instanceof TokenManagerError) throw error;
-            throw new TokenManagerError(TokenError.REFRESH_FAILED,`Failed to get valid credentials: ${error.message}`, error);
+            throw new TokenManagerError(
+                TokenError.REFRESH_FAILED,
+                `Failed to get valid credentials: ${error.message}`,
+                error,
+            );
         }
     }
 
-    async checkAndReloadIfNeeded() {
+    async checkAndReloadIfNeeded(context) {
         const now = Date.now();
-        if (now - this.memoryCache.lastCheck < CACHE_CHECK_INTERVAL_MS) return;
-        this.memoryCache.lastCheck = now;
+        if (now - context.memoryCache.lastCheck < CACHE_CHECK_INTERVAL_MS) return;
+        context.memoryCache.lastCheck = now;
 
         try {
-            const stats = await fs.stat(this.getCredentialFilePath());
-            if (stats.mtimeMs > this.memoryCache.fileModTime) {
-                await this.reloadCredentialsFromFile();
-                this.memoryCache.fileModTime = stats.mtimeMs;
+            const stats = await fs.stat(context.credentialFilePath);
+            if (stats.mtimeMs > context.memoryCache.fileModTime) {
+                await this.reloadCredentialsFromFile(context);
+                context.memoryCache.fileModTime = stats.mtimeMs;
             }
         } catch (error) {
             if (error.code !== 'ENOENT') {
-                this.memoryCache.credentials = null;
-                this.memoryCache.fileModTime = 0;
-                throw new TokenManagerError(TokenError.FILE_ACCESS_ERROR, `Failed to access credentials file: ${error.message}`, error);
+                context.memoryCache.credentials = null;
+                context.memoryCache.fileModTime = 0;
+                throw new TokenManagerError(
+                    TokenError.FILE_ACCESS_ERROR,
+                    `Failed to access credentials file: ${error.message}`,
+                    error,
+                );
             }
-            this.memoryCache.fileModTime = 0;
+            context.memoryCache.credentials = null;
+            context.memoryCache.fileModTime = 0;
         }
     }
 
-    async reloadCredentialsFromFile() {
+    async reloadCredentialsFromFile(context) {
         try {
-            const content = await fs.readFile(this.getCredentialFilePath(), 'utf-8');
-            this.memoryCache.credentials = JSON.parse(content);
-        } catch (error) {
-            this.memoryCache.credentials = null;
+            const content = await fs.readFile(context.credentialFilePath, 'utf-8');
+            context.memoryCache.credentials = JSON.parse(content);
+        } catch (_error) {
+            context.memoryCache.credentials = null;
         }
     }
 
-    async performTokenRefresh(qwenClient, forceRefresh = false) {
-        const lockPath = this.getLockFilePath();
+    async performTokenRefresh(context, qwenClient, forceRefresh = false) {
         try {
-            const currentCredentials = qwenClient.getCredentials();
-            if (!currentCredentials.refresh_token) {
+            const currentCredentials = qwenClient.getCredentials() || context.memoryCache.credentials;
+            if (!currentCredentials || !currentCredentials.refresh_token) {
                 throw new TokenManagerError(TokenError.NO_REFRESH_TOKEN, 'No refresh token available');
             }
 
-            await this.acquireLock(lockPath);
-            await this.checkAndReloadIfNeeded();
+            await this.acquireLock(context);
+            await this.checkAndReloadIfNeeded(context);
 
-            if (!forceRefresh && this.memoryCache.credentials && this.isTokenValid(this.memoryCache.credentials)) {
-                qwenClient.setCredentials(this.memoryCache.credentials);
-                return this.memoryCache.credentials;
+            if (!forceRefresh && context.memoryCache.credentials && this.isTokenValid(context.memoryCache.credentials)) {
+                qwenClient.setCredentials(context.memoryCache.credentials);
+                return context.memoryCache.credentials;
             }
 
             const response = await qwenClient.refreshAccessToken();
@@ -651,67 +793,85 @@ class SharedTokenManager {
                 expiry_date: Date.now() + response.expires_in * 1000,
             };
 
-            this.memoryCache.credentials = credentials;
+            context.memoryCache.credentials = credentials;
             qwenClient.setCredentials(credentials);
-            await this.saveCredentialsToFile(credentials);
+            await this.saveCredentialsToFile(context, credentials);
             console.log('[Qwen Auth] Token refresh response: ok');
             return credentials;
 
         } catch (error) {
             if (error instanceof TokenManagerError) throw error;
-            throw new TokenManagerError(TokenError.REFRESH_FAILED, `Unexpected error during token refresh: ${error.message}`, error);
+            
+            // 处理 CredentialsClearRequiredError - 清除凭证文件
+            if (error instanceof CredentialsClearRequiredError) {
+                try {
+                    await fs.unlink(context.credentialFilePath);
+                    console.log('[Qwen Auth] Credentials cleared due to refresh token expiry');
+                } catch (_) { /* ignore */ }
+                throw error; // 重新抛出以便上层处理
+            }
+            
+            // 如果刷新令牌无效/过期,删除此上下文对应的凭证文件
+            if (error && (error.status === 400 || /expired|invalid/i.test(error.message || ''))) {
+                try { await fs.unlink(context.credentialFilePath); } catch (_) { /* ignore */ }
+            }
+            throw new TokenManagerError(
+                TokenError.REFRESH_FAILED,
+                `Unexpected error during token refresh: ${error.message}`,
+                error,
+            );
         } finally {
-            await this.releaseLock(lockPath);
+            await this.releaseLock(context);
         }
     }
     
-    async saveCredentialsToFile(credentials) {
-        const filePath = this.getCredentialFilePath();
-        await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-        await fs.writeFile(filePath, JSON.stringify(credentials, null, 2), { mode: 0o600 });
-        const stats = await fs.stat(filePath);
-        this.memoryCache.fileModTime = stats.mtimeMs;
+    async saveCredentialsToFile(context, credentials) {
+        await fs.mkdir(path.dirname(context.credentialFilePath), { recursive: true, mode: 0o700 });
+        await fs.writeFile(context.credentialFilePath, JSON.stringify(credentials, null, 2), { mode: 0o600 });
+        const stats = await fs.stat(context.credentialFilePath);
+        context.memoryCache.fileModTime = stats.mtimeMs;
     }
 
     isTokenValid(credentials) {
         return credentials?.expiry_date && Date.now() < credentials.expiry_date - TOKEN_REFRESH_BUFFER_MS;
     }
 
-    getCredentialFilePath() {
-        return path.join(os.homedir(), QWEN_DIR, QWEN_CREDENTIAL_FILENAME);
-    }
-
-    getLockFilePath() {
-        return path.join(os.homedir(), QWEN_DIR, QWEN_LOCK_FILENAME);
-    }
-    
-    async acquireLock(lockPath) {
-        const { maxAttempts, attemptInterval } = this.lockConfig;
+    async acquireLock(context) {
+        const { maxAttempts, attemptInterval } = context.lockConfig || DEFAULT_LOCK_CONFIG;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             try {
-                await fs.writeFile(lockPath, randomUUID(), { flag: 'wx' });
+                await fs.writeFile(context.lockFilePath, randomUUID(), { flag: 'wx' });
                 return;
             } catch (error) {
                 if (error.code === 'EEXIST') {
                     try {
-                        const stats = await fs.stat(lockPath);
+                        const stats = await fs.stat(context.lockFilePath);
                         if (Date.now() - stats.mtimeMs > LOCK_TIMEOUT_MS) {
-                            await fs.unlink(lockPath);
+                            await fs.unlink(context.lockFilePath);
                             continue;
                         }
-                    } catch (statError) { /* ignore */ }
+                    } catch (_statError) { /* ignore */ }
                     await new Promise(resolve => setTimeout(resolve, attemptInterval));
                 } else {
-                    throw new TokenManagerError(TokenError.FILE_ACCESS_ERROR,`Failed to create lock file: ${error.message}`,error);
+                    throw new TokenManagerError(
+                        TokenError.FILE_ACCESS_ERROR,
+                        `Failed to create lock file: ${error.message}`,
+                        error,
+                    );
                 }
             }
         }
         throw new TokenManagerError(TokenError.LOCK_TIMEOUT, 'Lock acquisition timeout');
     }
 
-    async releaseLock(lockPath) {
-        try { await fs.unlink(lockPath); } 
-        catch (error) { if (error.code !== 'ENOENT') console.warn(`Failed to release lock: ${error.message}`);}
+    async releaseLock(context) {
+        try {
+            await fs.unlink(context.lockFilePath);
+        } catch (error) {
+            if (error.code !== 'ENOENT') {
+                console.warn(`Failed to release lock: ${error.message}`);
+            }
+        }
     }
 }
 
@@ -720,6 +880,11 @@ class SharedTokenManager {
 
 class QwenOAuth2Client {
     credentials = {};
+
+    constructor(config, useSystemProxy = false) {
+        this.config = config;
+        this.useSystemProxy = useSystemProxy;
+    }
 
     setCredentials(credentials) { this.credentials = credentials; }
     getCredentials() { return this.credentials; }
@@ -731,19 +896,27 @@ class QwenOAuth2Client {
             refresh_token: this.credentials.refresh_token,
             client_id: QWEN_OAUTH_CLIENT_ID,
         };
-        const response = await fetch(QWEN_OAUTH_TOKEN_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-            body: objectToUrlEncoded(bodyData),
-        });
-        if (!response.ok) {
-            if (response.status === 400) {
-                await fs.unlink(path.join(os.homedir(), QWEN_DIR, QWEN_CREDENTIAL_FILENAME)).catch(() => {});
-                throw new Error("Refresh token expired or invalid.");
+        try {
+            const response = await commonFetch(QWEN_OAUTH_TOKEN_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+                body: objectToUrlEncoded(bodyData),
+            }, this.useSystemProxy);
+            return response;
+        } catch (error) {
+            const errorData = error.data || {};
+            // 处理 400 错误,可能表示刷新令牌已过期
+            if (error.status === 400) {
+                // 清除凭证将由 SharedTokenManager 处理
+                throw new CredentialsClearRequiredError(
+                    "刷新令牌已过期或无效。请使用 '/auth' 重新认证。",
+                    { status: error.status, response: errorData }
+                );
             }
-            throw new Error(`Token refresh failed: ${response.status}`);
+            throw new Error(
+                `Token refresh failed: ${error.status || 'Unknown'} - ${errorData.error_description || error.message || 'No details'}`
+            );
         }
-        return await response.json();
     }
 
     async requestDeviceAuthorization(options) {
@@ -753,13 +926,16 @@ class QwenOAuth2Client {
             code_challenge: options.code_challenge,
             code_challenge_method: options.code_challenge_method,
         };
-        const response = await fetch(QWEN_OAUTH_DEVICE_CODE_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-            body: objectToUrlEncoded(bodyData),
-        });
-        if (!response.ok) throw new Error(`Device authorization failed: ${response.status}`);
-        return await response.json();
+        try {
+            const response = await commonFetch(QWEN_OAUTH_DEVICE_CODE_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+                body: objectToUrlEncoded(bodyData),
+            }, this.useSystemProxy);
+            return response;
+        } catch (error) {
+            throw new Error(`Device authorization failed: ${error.status || error.message}`);
+        }
     }
 
     async pollDeviceToken(options) {
@@ -769,23 +945,36 @@ class QwenOAuth2Client {
             device_code: options.device_code,
             code_verifier: options.code_verifier,
         };
-        const response = await fetch(QWEN_OAUTH_TOKEN_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-            body: objectToUrlEncoded(bodyData),
-        });
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            if (response.status === 400 && errorData.error === 'authorization_pending') {
+        try {
+            const response = await commonFetch(QWEN_OAUTH_TOKEN_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+                body: objectToUrlEncoded(bodyData),
+            }, this.useSystemProxy);
+            return response;
+        } catch (error) {
+            // 根据 OAuth RFC 8628,处理标准轮询响应
+            // 尝试解析错误响应为 JSON
+            const errorData = error.data || {};
+            const status = error.status;
+
+            // 用户尚未批准授权请求,继续轮询
+            if (status === 400 && errorData.error === 'authorization_pending') {
                 return { status: 'pending' };
             }
-            if (response.status === 429 && errorData.error === 'slow_down') {
+
+            // 客户端轮询过于频繁,返回 pending 并设置 slowDown 标志
+            if (status === 429 && errorData.error === 'slow_down') {
                 return { status: 'pending', slowDown: true };
             }
-            const error = new Error(`Device token poll failed: ${errorData.error || response.status}`);
-            error.status = response.status;
-            throw error;
+
+            // 处理其他 400 错误(access_denied, expired_token 等)作为真正的错误
+            // 对于其他错误,抛出适当的错误信息
+            const err = new Error(
+                `Device token poll failed: ${errorData.error || 'Unknown error'} - ${errorData.error_description || 'No details provided'}`
+            );
+            err.status = status;
+            throw err;
         }
-        return await response.json();
     }
 }
