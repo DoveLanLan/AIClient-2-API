@@ -1848,8 +1848,6 @@ export class KiroApiService {
     inputTokens = 0
   ) {
     const messageId = `${uuidv4()}`;
-    // Helper to estimate tokens (simple heuristic)
-    const estimateTokens = (text) => Math.ceil((text || "").length / 4);
 
     if (isStream) {
       // Kiro API is "pseudo-streaming", so we'll send a few events to simulate
@@ -1903,7 +1901,7 @@ export class KiroApiService {
           type: "content_block_stop",
           index: contentBlockIndex,
         });
-        totalOutputTokens += estimateTokens(content);
+                totalOutputTokens += this.countTextTokens(content);
         // If there are tool calls, the stop reason remains "tool_use".
         // If only content, it's "end_turn".
         if (!toolCalls || toolCalls.length === 0) {
@@ -1954,7 +1952,7 @@ export class KiroApiService {
             type: "content_block_stop",
             index: index,
           });
-          totalOutputTokens += estimateTokens(JSON.stringify(inputObject));
+                    totalOutputTokens += this.countTextTokens(JSON.stringify(inputObject));
         });
         stopReason = "tool_use"; // If there are tool calls, the stop reason is tool_use
       }
