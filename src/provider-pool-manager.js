@@ -21,8 +21,9 @@ export class ProviderPoolManager {
         this.globalConfig = options.globalConfig || {}; // 存储全局配置
         this.providerStatus = {}; // Tracks health and usage for each provider instance
         this.roundRobinIndex = {}; // Tracks the current index for round-robin selection for each provider type
-        this.maxErrorCount = options.maxErrorCount || 3; // Default to 3 errors before marking unhealthy
-        this.healthCheckInterval = options.healthCheckInterval || 10 * 60 * 1000; // Default to 10 minutes
+        // 使用 ?? 运算符确保 0 也能被正确设置，而不是被 || 替换为默认值
+        this.maxErrorCount = options.maxErrorCount ?? 3; // Default to 3 errors before marking unhealthy
+        this.healthCheckInterval = options.healthCheckInterval ?? 10 * 60 * 1000; // Default to 10 minutes
         
         // 日志级别控制
         this.logLevel = options.logLevel || 'info'; // 'debug', 'info', 'warn', 'error'
@@ -87,7 +88,7 @@ export class ProviderPoolManager {
                 });
             });
         }
-        this._log('info', 'Initialized provider statuses: ok');
+        this._log('info', `Initialized provider statuses: ok (maxErrorCount: ${this.maxErrorCount})`);
     }
 
     /**
@@ -98,7 +99,7 @@ export class ProviderPoolManager {
      * @param {string} [requestedModel] - Optional. The model name to filter providers by.
      * @returns {object|null} The selected provider's configuration, or null if no healthy provider is found.
      */
-    selectProvider(providerType, requestedModel = null) {
+    selectProvider(providerType, requestedModel = null, options = {}) {
         // 参数校验
         if (!providerType || typeof providerType !== 'string') {
             this._log('error', `Invalid providerType: ${providerType}`);
@@ -147,14 +148,15 @@ export class ProviderPoolManager {
         // 更新下次轮询的索引
         this.roundRobinIndex[indexKey] = (currentIndex + 1) % availableAndHealthyProviders.length;
         
-        // 更新使用信息
-        selected.config.lastUsed = new Date().toISOString();
-        selected.config.usageCount++;
+        // 更新使用信息（除非明确跳过）
+        if (!options.skipUsageCount) {
+            selected.config.lastUsed = new Date().toISOString();
+            selected.config.usageCount++;
+            // 使用防抖保存
+            this._debouncedSave(providerType);
+        }
 
-        this._log('debug', `Selected provider for ${providerType} (round-robin): ${selected.config.uuid}${requestedModel ? ` for model: ${requestedModel}` : ''}`);
-        
-        // 使用防抖保存
-        this._debouncedSave(providerType);
+        this._log('debug', `Selected provider for ${providerType} (round-robin): ${selected.config.uuid}${requestedModel ? ` for model: ${requestedModel}` : ''}${options.skipUsageCount ? ' (skip usage count)' : ''}`);
         
         return selected.config;
     }
@@ -336,7 +338,7 @@ export class ProviderPoolManager {
         const baseMessage = { role: 'user', content: 'Hello, are you ok?' };
         
         // Gemini 使用不同的请求格式
-        if (providerType === 'gemini-cli') {
+        if (providerType.startsWith('gemini')) {
             return {
                 contents: [{
                     role: 'user',
@@ -346,7 +348,7 @@ export class ProviderPoolManager {
         }
         
         // OpenAI Custom Responses 使用特殊格式
-        if (providerType === 'openai-custom-responses') {
+        if (providerType === MODEL_PROVIDER.OPENAI_CUSTOM_RESPONSES) {
             return {
                 input: [baseMessage],
                 model: modelName
