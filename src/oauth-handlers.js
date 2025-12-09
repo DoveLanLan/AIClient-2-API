@@ -182,9 +182,10 @@ async function createOAuthCallbackServer(config, redirectUri, authClient, credPa
             }
         });
         
-        const host = 'localhost';
-        server.listen(config.port, host, () => {
-            console.log(`${config.logPrefix} OAuth 回调服务器已启动于 ${host}:${config.port}`);
+        // 在容器中绑定 0.0.0.0，确保端口映射后宿主机可访问；本机运行同样兼容
+        const listenHost = process.env.OAUTH_CALLBACK_LISTEN_HOST || '0.0.0.0';
+        server.listen(config.port, listenHost, () => {
+            console.log(`${config.logPrefix} OAuth 回调服务器已启动于 ${listenHost}:${config.port}`);
             activeServers.set(config.port, server);
             resolve(server);
         });
@@ -203,8 +204,9 @@ async function handleGoogleOAuth(providerKey, currentConfig) {
         throw new Error(`未知的提供商: ${providerKey}`);
     }
     
-    const host = 'localhost';
-    const redirectUri = `http://${host}:${config.port}`;
+    // 重定向仍使用 localhost 以满足 Google OAuth 允许的回调域
+    const redirectHost = process.env.OAUTH_CALLBACK_REDIRECT_HOST || 'localhost';
+    const redirectUri = `http://${redirectHost}:${config.port}`;
     
     const authClient = new OAuth2Client(config.clientId, config.clientSecret);
     authClient.redirectUri = redirectUri;

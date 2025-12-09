@@ -6,9 +6,10 @@ services:
     privileged: true
     ports:
       - "3000:3000"
+      - "8086:8086"
     environment:
       - TZ=Asia/Shanghai
-      - ARGS=--model-provider claude-kiro-oauth --api-key 123456 --host 0.0.0.0 --port 3000
+      - ARGS=--api-key 123456 --host 0.0.0.0 --port 3000
     volumes:
       # 将宿主的 AWS SSO 缓存目录挂载到容器内默认路径。macOS/WSL 未设置 AWS_SSO_CACHE_DIR 时回退到各自的 ~/.aws/sso/cache。
       - ${AWS_SSO_CACHE_DIR:-${HOME}/.aws/sso/cache}:/root/.aws/sso/cache:rw
