@@ -6,6 +6,7 @@ services:
     privileged: true
     ports:
       - "3000:3000"
+      - "8085:8085"
       - "8086:8086"
     environment:
       - TZ=Asia/Shanghai
