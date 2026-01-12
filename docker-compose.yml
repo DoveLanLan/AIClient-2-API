@@ -12,7 +12,10 @@ services:
       - TZ=Asia/Shanghai
       - ARGS=--api-key 123456 --host 0.0.0.0 --port 3000
     volumes:
-      # 将宿主的 AWS SSO 缓存目录挂载到容器内默认路径。macOS/WSL 未设置 AWS_SSO_CACHE_DIR 时回退到各自的 ~/.aws/sso/cache。
+      # 将宿主的 AWS SSO 缓存目录挂载到容器内。
+      # - /app/.aws/sso/cache：用于 --kiro-oauth-creds-file /app/... 的场景（见 DOCKER-QUICKSTART.md）
+      # - /root/.aws/sso/cache：用于默认读取 os.homedir()/HOME 的场景
+      - ${AWS_SSO_CACHE_DIR:-${HOME}/.aws/sso/cache}:/app/.aws/sso/cache:rw
       - ${AWS_SSO_CACHE_DIR:-${HOME}/.aws/sso/cache}:/root/.aws/sso/cache:rw
       - /etc/localtime:/etc/localtime:ro
     healthcheck:

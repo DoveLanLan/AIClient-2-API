@@ -19,6 +19,8 @@ const OAUTH_CLIENT_SECRET = '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';
 const GEMINI_MODELS = getProviderModels('gemini-cli-oauth');
 const ANTI_TRUNCATION_MODELS = GEMINI_MODELS.map(model => `anti-${model}`);
 
+let activeOAuthCallbackServer = null;
+
 function is_anti_truncation_model(model) {
     return ANTI_TRUNCATION_MODELS.some(antiModel => model.includes(antiModel));
 }
@@ -252,12 +254,18 @@ export class GeminiApiService {
     }
 
     async getNewToken(credPath) {
-        let host = this.host;
-        if (!host || host === 'undefined') {
-            host = '127.0.0.1';
-        }
-        const redirectUri = `http://${host}:${AUTH_REDIRECT_PORT}`;
+        // In Docker, binding to 0.0.0.0 is needed for port publishing, but OAuth redirect
+        // must use a loopback host (localhost/127.0.0.1) for Google OAuth to work reliably.
+        const listenHost = process.env.OAUTH_CALLBACK_LISTEN_HOST || '0.0.0.0';
+        const redirectHost = process.env.OAUTH_CALLBACK_REDIRECT_HOST || 'localhost';
+        const redirectUri = `http://${redirectHost}:${AUTH_REDIRECT_PORT}`;
         this.authClient.redirectUri = redirectUri;
+
+        // Close any previous callback server that might still be waiting for a browser redirect.
+        if (activeOAuthCallbackServer && activeOAuthCallbackServer.listening) {
+            await new Promise((resolve) => activeOAuthCallbackServer.close(resolve));
+        }
+
         return new Promise(async (resolve, reject) => {
             const authUrl = this.authClient.generateAuthUrl({ access_type: 'offline', scope: ['https://www.googleapis.com/auth/cloud-platform'] });
             console.log('\n[Gemini Auth] 正在自动打开浏览器进行授权...');
@@ -313,14 +321,34 @@ export class GeminiApiService {
             });
             server.on('error', (err) => {
                 if (err.code === 'EADDRINUSE') {
-                    const errorMessage = `[Gemini Auth] Port ${AUTH_REDIRECT_PORT} on ${this.host} is already in use.`;
+                    const errorMessage = `[Gemini Auth] Port ${AUTH_REDIRECT_PORT} on ${listenHost} is already in use.`;
                     console.error(errorMessage);
                     reject(new Error(errorMessage));
                 } else {
                     reject(err);
                 }
             });
-            server.listen(AUTH_REDIRECT_PORT, this.host);
+
+            // Safety timeout to avoid leaving the port occupied forever if the user never completes OAuth.
+            const timeoutMs = Number(process.env.GEMINI_OAUTH_TIMEOUT_MS || 5 * 60 * 1000);
+            const timeout = setTimeout(() => {
+                if (server.listening) {
+                    console.error('[Gemini Auth] OAuth timed out; closing callback server.');
+                    server.close();
+                }
+                reject(new Error('[Gemini Auth] OAuth timed out.'));
+            }, timeoutMs);
+
+            server.on('close', () => {
+                clearTimeout(timeout);
+                if (activeOAuthCallbackServer === server) {
+                    activeOAuthCallbackServer = null;
+                }
+            });
+
+            server.listen(AUTH_REDIRECT_PORT, listenHost, () => {
+                activeOAuthCallbackServer = server;
+            });
         });
     }
 

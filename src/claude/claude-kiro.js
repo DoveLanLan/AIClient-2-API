@@ -14,10 +14,11 @@ const KIRO_CONSTANTS = {
   REFRESH_URL: "https://prod.{{region}}.auth.desktop.kiro.dev/refreshToken",
   REFRESH_IDC_URL: "https://oidc.{{region}}.amazonaws.com/token",
   BASE_URL:
-    "https://codewhisperer.{{region}}.amazonaws.com/generateAssistantResponse",
+    "https://q.{{region}}.amazonaws.com/generateAssistantResponse",
   AMAZON_Q_URL:
     "https://codewhisperer.{{region}}.amazonaws.com/SendMessageStreaming",
-  DEFAULT_MODEL_NAME: "claude-opus-4-5",
+  // 注意：claude-opus-4-5 系列通常需要特殊权限，默认用普遍可用的模型
+  DEFAULT_MODEL_NAME: "claude-sonnet-4-5",
   AXIOS_TIMEOUT: 120000, // 2 minutes timeout
   USER_AGENT: "KiroIDE",
   CONTENT_TYPE_JSON: "application/json",
@@ -273,6 +274,130 @@ function deduplicateToolCalls(toolCalls) {
     }
   }
   return uniqueToolCalls;
+}
+
+function truncateString(text, maxChars) {
+  if (!text) return "";
+  const s = String(text);
+  if (!Number.isFinite(maxChars) || maxChars <= 0) return "";
+  return s.length > maxChars ? `${s.slice(0, maxChars)}…` : s;
+}
+
+function toFiniteNumber(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function parseCommaList(value) {
+  if (value == null) return [];
+  return String(value)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function minifyJsonSchemaForKiro(
+  schema,
+  { maxDepth = 8, maxProperties = 80, maxEnumItems = 100 } = {},
+  depth = 0
+) {
+  if (!schema) return {};
+  if (typeof schema !== "object") return {};
+  if (depth >= maxDepth) {
+    if (schema && typeof schema === "object" && typeof schema.type === "string")
+      return { type: schema.type };
+    return { type: "object" };
+  }
+
+  if (Array.isArray(schema)) {
+    return schema
+      .slice(0, maxProperties)
+      .map((v) =>
+        minifyJsonSchemaForKiro(
+          v,
+          { maxDepth, maxProperties, maxEnumItems },
+          depth + 1
+        )
+      );
+  }
+
+  const dropKeys = new Set([
+    "$schema",
+    "$id",
+    "title",
+    "description",
+    "examples",
+    "default",
+    "comment",
+    "deprecated",
+    "readOnly",
+    "writeOnly",
+  ]);
+
+  const out = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (dropKeys.has(key)) continue;
+
+    if (key === "properties" && value && typeof value === "object") {
+      const props = {};
+      const entries = Object.entries(value).slice(0, maxProperties);
+      for (const [propKey, propSchema] of entries) {
+        props[propKey] = minifyJsonSchemaForKiro(
+          propSchema,
+          { maxDepth, maxProperties, maxEnumItems },
+          depth + 1
+        );
+      }
+      out.properties = props;
+      continue;
+    }
+
+    if (key === "items") {
+      if (value && typeof value === "object") {
+        out.items = minifyJsonSchemaForKiro(
+          value,
+          { maxDepth, maxProperties, maxEnumItems },
+          depth + 1
+        );
+      } else {
+        out.items = value;
+      }
+      continue;
+    }
+
+    if (key === "enum" && Array.isArray(value)) {
+      out.enum = value.slice(0, maxEnumItems);
+      continue;
+    }
+
+    if ((key === "oneOf" || key === "anyOf" || key === "allOf") && Array.isArray(value)) {
+      out[key] = value
+        .slice(0, maxProperties)
+        .map((v) =>
+          minifyJsonSchemaForKiro(
+            v,
+            { maxDepth, maxProperties, maxEnumItems },
+            depth + 1
+          )
+        );
+      continue;
+    }
+
+    if (value && typeof value === "object") {
+      out[key] = minifyJsonSchemaForKiro(
+        value,
+        { maxDepth, maxProperties, maxEnumItems },
+        depth + 1
+      );
+      continue;
+    }
+
+    out[key] = value;
+  }
+
+  if (!out.type && schema.type) out.type = schema.type;
+  if (!out.type && out.properties) out.type = "object";
+  return out;
 }
 
 export class KiroApiService {
@@ -720,18 +845,149 @@ export class KiroApiService {
 
     const codewhispererModel =
       MODEL_MAPPING[model] || MODEL_MAPPING[this.modelName];
+    if (!codewhispererModel) {
+      const supportedModels = Object.keys(MODEL_MAPPING);
+      throw new Error(
+        `[Kiro] Unsupported model "${model}". Supported models: ${supportedModels.join(
+          ", "
+        )}`
+      );
+    }
 
     let toolsContext = {};
-    if (tools && Array.isArray(tools) && tools.length > 0) {
-      toolsContext = {
-        tools: tools.map((tool) => ({
+    const disableTools =
+      this.config.KIRO_DISABLE_TOOLS === true ||
+      this.config.KIRO_DISABLE_TOOLS === "true" ||
+      this.config.KIRO_DISABLE_TOOLS === 1 ||
+      this.config.KIRO_DISABLE_TOOLS === "1";
+    if (disableTools) {
+      console.warn("[Kiro] Tools disabled by KIRO_DISABLE_TOOLS; omitting tools");
+    } else if (tools && Array.isArray(tools) && tools.length > 0) {
+      const maxToolDescriptionChars = toFiniteNumber(
+        this.config.KIRO_MAX_TOOL_DESCRIPTION_CHARS ?? 1024,
+        1024
+      );
+      const maxToolSchemaChars = toFiniteNumber(
+        this.config.KIRO_MAX_TOOL_SCHEMA_CHARS ?? 8192,
+        8192
+      );
+      const maxToolsTotalChars = toFiniteNumber(
+        this.config.KIRO_MAX_TOOLS_TOTAL_CHARS ?? 60000,
+        60000
+      );
+      const maxToolSchemaDepth = toFiniteNumber(
+        this.config.KIRO_MAX_TOOL_SCHEMA_DEPTH ?? 8,
+        8
+      );
+      const maxToolSchemaProperties = toFiniteNumber(
+        this.config.KIRO_MAX_TOOL_SCHEMA_PROPERTIES ?? 80,
+        80
+      );
+      const maxToolSchemaEnumItems = toFiniteNumber(
+        this.config.KIRO_MAX_TOOL_SCHEMA_ENUM_ITEMS ?? 100,
+        100
+      );
+      const allowlist = new Set(parseCommaList(this.config.KIRO_TOOL_ALLOWLIST));
+      const denylist = new Set(parseCommaList(this.config.KIRO_TOOL_DENYLIST));
+
+      const filteredTools = [];
+      let totalChars = 0;
+
+      for (const tool of tools) {
+        if (!tool || typeof tool !== "object") continue;
+        const name = String(tool.name || "").trim();
+        if (!name) continue;
+        if (allowlist.size > 0 && !allowlist.has(name)) continue;
+        if (denylist.has(name)) continue;
+
+        const description = truncateString(
+          tool.description || "",
+          maxToolDescriptionChars
+        );
+
+        let schemaJson =
+          tool.input_schema && typeof tool.input_schema === "object"
+            ? tool.input_schema
+            : {};
+        schemaJson = minifyJsonSchemaForKiro(schemaJson, {
+          maxDepth: maxToolSchemaDepth,
+          maxProperties: maxToolSchemaProperties,
+          maxEnumItems: maxToolSchemaEnumItems,
+        });
+
+        let schemaStr = "{}";
+        try {
+          schemaStr = JSON.stringify(schemaJson);
+        } catch {
+          schemaJson = {};
+          schemaStr = "{}";
+        }
+
+        if (schemaStr.length > maxToolSchemaChars) {
+          console.warn(
+            `[Kiro] Tool "${name}" input_schema too large (${schemaStr.length} chars); stripping enums/properties`
+          );
+          try {
+            const schemaWithoutEnums = JSON.parse(schemaStr);
+            const stripEnums = (obj, d = 0) => {
+              if (!obj || typeof obj !== "object") return;
+              if (Array.isArray(obj)) {
+                for (const v of obj) stripEnums(v, d + 1);
+                return;
+              }
+              delete obj.enum;
+              if (obj.properties && typeof obj.properties === "object") {
+                const keys = Object.keys(obj.properties);
+                for (const k of keys.slice(maxToolSchemaProperties)) {
+                  delete obj.properties[k];
+                }
+              }
+              for (const v of Object.values(obj)) stripEnums(v, d + 1);
+            };
+            stripEnums(schemaWithoutEnums);
+            schemaJson = schemaWithoutEnums;
+            schemaStr = JSON.stringify(schemaJson);
+          } catch {
+            schemaJson = {};
+            schemaStr = "{}";
+          }
+
+          if (schemaStr.length > maxToolSchemaChars) {
+            console.warn(
+              `[Kiro] Tool "${name}" schema still too large (${schemaStr.length} chars); using minimal object schema`
+            );
+            schemaJson = { type: "object" };
+            schemaStr = JSON.stringify(schemaJson);
+          }
+        }
+
+        const specChars = name.length + description.length + schemaStr.length;
+        if (
+          Number.isFinite(maxToolsTotalChars) &&
+          maxToolsTotalChars > 0 &&
+          totalChars + specChars > maxToolsTotalChars
+        ) {
+          console.warn(
+            `[Kiro] Tool definitions exceed limit (${maxToolsTotalChars} chars); dropping remaining tools`
+          );
+          break;
+        }
+
+        totalChars += specChars;
+        filteredTools.push({
           toolSpecification: {
-            name: tool.name,
-            description: tool.description || "",
-            inputSchema: { json: tool.input_schema || {} },
+            name,
+            description,
+            inputSchema: { json: schemaJson },
           },
-        })),
-      };
+        });
+      }
+
+      if (filteredTools.length > 0) {
+        toolsContext = { tools: filteredTools };
+      } else {
+        console.warn("[Kiro] No usable tools after filtering; omitting tools");
+      }
     }
 
     const history = [];
@@ -1323,7 +1579,23 @@ export class KiroApiService {
       await this.initializeAuth(true);
     }
 
-    const finalModel = MODEL_MAPPING[model] ? model : this.modelName;
+    const requestedModel = model;
+    const finalModel = MODEL_MAPPING[requestedModel]
+      ? requestedModel
+      : this.modelName;
+    if (requestedModel && finalModel !== requestedModel) {
+      console.warn(
+        `[Kiro] Model "${requestedModel}" is not supported; falling back to "${finalModel}"`
+      );
+    }
+    if (!MODEL_MAPPING[finalModel]) {
+      const supportedModels = Object.keys(MODEL_MAPPING);
+      throw new Error(
+        `[Kiro] No supported default model configured (requested "${model}", default "${this.modelName}"). Supported models: ${supportedModels.join(
+          ", "
+        )}`
+      );
+    }
     console.log(`[Kiro] Calling generateContent with model: ${finalModel}`);
 
     // Estimate input tokens before making the API call
@@ -1337,7 +1609,7 @@ export class KiroApiService {
         responseText,
         false,
         "assistant",
-        model,
+        finalModel,
         toolCalls,
         inputTokens
       );
@@ -1624,7 +1896,7 @@ export class KiroApiService {
           id: messageId,
           type: "message",
           role: "assistant",
-          model: model,
+          model: finalModel,
           usage: { input_tokens: inputTokens, output_tokens: 0 },
           content: [],
         },
