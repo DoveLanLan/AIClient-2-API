@@ -12,9 +12,17 @@ import {
     checkAndAssignOrDefault,
     extractThinkingFromOpenAIText,
     mapFinishReason,
-    cleanJsonSchemaProperties as cleanJsonSchema
+    cleanJsonSchemaProperties as cleanJsonSchema,
+    CLAUDE_DEFAULT_MAX_TOKENS,
+    CLAUDE_DEFAULT_TEMPERATURE,
+    CLAUDE_DEFAULT_TOP_P,
+    GEMINI_DEFAULT_MAX_TOKENS,
+    GEMINI_DEFAULT_TEMPERATURE,
+    GEMINI_DEFAULT_TOP_P,
+    OPENAI_DEFAULT_INPUT_TOKEN_LIMIT,
+    OPENAI_DEFAULT_OUTPUT_TOKEN_LIMIT
 } from '../utils.js';
-import { MODEL_PROTOCOL_PREFIX } from '../../common.js';
+import { MODEL_PROTOCOL_PREFIX } from '../../utils/common.js';
 import {
     generateResponseCreated,
     generateResponseInProgress,
@@ -24,7 +32,7 @@ import {
     generateContentPartDone,
     generateOutputItemDone,
     generateResponseCompleted
-} from '../../openai/openai-responses-core.mjs';
+} from '../../providers/openai/openai-responses-core.mjs';
 
 /**
  * OpenAI转换器类
@@ -95,8 +103,25 @@ export class OpenAIConverter extends BaseConverter {
             case MODEL_PROTOCOL_PREFIX.GEMINI:
                 return this.toGeminiModelList(data);
             default:
-                return data;
+                return this.ensureDisplayName(data);
         }
+    }
+
+    /**
+     * Ensure display_name field exists in OpenAI model list
+     */
+    ensureDisplayName(openaiModels) {
+        if (!openaiModels || !openaiModels.data) {
+            return openaiModels;
+        }
+
+        return {
+            ...openaiModels,
+            data: openaiModels.data.map(model => ({
+                ...model,
+                display_name: model.display_name || model.id,
+            })),
+        };
     }
 
     // =========================================================================
@@ -190,12 +215,12 @@ export class OpenAIConverter extends BaseConverter {
         const mergedClaudeMessages = [];
         for (let i = 0; i < claudeMessages.length; i++) {
             const currentMessage = claudeMessages[i];
-            
+
             if (mergedClaudeMessages.length === 0) {
                 mergedClaudeMessages.push(currentMessage);
             } else {
                 const lastMessage = mergedClaudeMessages[mergedClaudeMessages.length - 1];
-                
+
                 // 如果当前消息的 role 与上一条消息的 role 相同，则合并 content 数组
                 if (lastMessage.role === currentMessage.role) {
                     lastMessage.content = lastMessage.content.concat(currentMessage.content);
@@ -225,9 +250,9 @@ export class OpenAIConverter extends BaseConverter {
         const claudeRequest = {
             model: openaiRequest.model,
             messages: mergedClaudeMessages,
-            max_tokens: checkAndAssignOrDefault(openaiRequest.max_tokens, 8192),
-            temperature: checkAndAssignOrDefault(openaiRequest.temperature, 1),
-            top_p: checkAndAssignOrDefault(openaiRequest.top_p, 0.95),
+            max_tokens: checkAndAssignOrDefault(openaiRequest.max_tokens, CLAUDE_DEFAULT_MAX_TOKENS),
+            temperature: checkAndAssignOrDefault(openaiRequest.temperature, CLAUDE_DEFAULT_TEMPERATURE),
+            top_p: checkAndAssignOrDefault(openaiRequest.top_p, CLAUDE_DEFAULT_TOP_P),
         };
 
         if (systemInstruction) {
@@ -346,7 +371,7 @@ export class OpenAIConverter extends BaseConverter {
         // 处理 OpenAI chunk 对象
         if (typeof openaiChunk === 'object' && !Array.isArray(openaiChunk)) {
             const choice = openaiChunk.choices?.[0];
-            if (!choice){
+            if (!choice) {
                 return null;
             }
 
@@ -400,7 +425,7 @@ export class OpenAIConverter extends BaseConverter {
             //                 }
             //             });
             //         }
-                    
+
             //         // 如果有 function.arguments，说明是参数增量
             //         if (toolCall.function?.arguments) {
             //             events.push({
@@ -445,8 +470,8 @@ export class OpenAIConverter extends BaseConverter {
             if (finishReason) {
                 // 映射 finish_reason
                 const stopReason = finishReason === "stop" ? "end_turn" :
-                                 finishReason === "length" ? "max_tokens" :
-                                 "end_turn";
+                    finishReason === "length" ? "max_tokens" :
+                        "end_turn";
 
                 events.push({
                     type: "content_block_stop",
@@ -514,8 +539,8 @@ export class OpenAIConverter extends BaseConverter {
                 version: m.version || "1.0.0",
                 displayName: m.displayName || m.id,
                 description: m.description || `A generative model for text and chat generation. ID: ${m.id}`,
-                inputTokenLimit: m.inputTokenLimit || 32768,
-                outputTokenLimit: m.outputTokenLimit || 8192,
+                inputTokenLimit: m.inputTokenLimit || OPENAI_DEFAULT_INPUT_TOKEN_LIMIT,
+                outputTokenLimit: m.outputTokenLimit || OPENAI_DEFAULT_OUTPUT_TOKEN_LIMIT,
                 supportedGenerationMethods: m.supportedGenerationMethods || ["generateContent", "streamGenerateContent"]
             }))
         };
@@ -539,122 +564,530 @@ export class OpenAIConverter extends BaseConverter {
     // OpenAI -> Gemini 转换
     // =========================================================================
 
+    // Gemini Openai thought signature constant
+    static GEMINI_OPENAI_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
     /**
      * OpenAI请求 -> Gemini请求
      */
     toGeminiRequest(openaiRequest) {
         const messages = openaiRequest.messages || [];
-        const { systemInstruction, nonSystemMessages } = extractSystemMessages(messages);
+        const model = openaiRequest.model || '';
         
-        const processedMessages = [];
-        let lastMessage = null;
-        
-        for (const message of nonSystemMessages) {
-            const geminiRole = message.role === 'assistant' ? 'model' : message.role;
-            
-            if (geminiRole === 'tool') {
-                // Save previous model response with functionCall
-                if (lastMessage) {
-                    processedMessages.push(lastMessage);
-                    lastMessage = null;
-                }
-                
-                // Get function name from message.name or via tool_call_id
-                let functionName = message.name;
-                if (!functionName && message.tool_call_id) {
-                    const currentIndex = nonSystemMessages.indexOf(message);
-                    for (let i = currentIndex - 1; i >= 0; i--) {
-                        const prevMsg = nonSystemMessages[i];
-                        if (prevMsg.role === 'assistant' && prevMsg.tool_calls) {
-                            const toolCall = prevMsg.tool_calls.find(tc => tc.id === message.tool_call_id);
-                            if (toolCall?.function?.name) {
-                                functionName = toolCall.function.name;
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                // Build functionResponse according to Gemini API spec
-                const parsedContent = safeParseJSON(message.content);
-                const contentStr = typeof parsedContent === 'string' ? parsedContent : JSON.stringify(parsedContent);
-                
-                processedMessages.push({
-                    role: 'user',
-                    parts: [{
-                        functionResponse: {
-                            name: functionName || 'unknown',
-                            response: {
-                                name: functionName || 'unknown',
-                                content: contentStr
-                            }
-                        }
-                    }]
-                });
-                lastMessage = null;
-                continue;
-            }
-            
-            let processedContent = this.processOpenAIContentToGeminiParts(message.content);
-            
-            // Add tool_calls as functionCall to parts
-            if (message.tool_calls && Array.isArray(message.tool_calls)) {
-                for (const toolCall of message.tool_calls) {
-                    if (toolCall.function) {
-                        processedContent.push({
-                            functionCall: {
-                                name: toolCall.function.name,
-                                args: safeParseJSON(toolCall.function.arguments)
-                            }
-                        });
+        // 构建 tool_call_id -> function_name 映射
+        const tcID2Name = {};
+        for (const message of messages) {
+            if (message.role === 'assistant' && message.tool_calls) {
+                for (const tc of message.tool_calls) {
+                    if (tc.type === 'function' && tc.id && tc.function?.name) {
+                        tcID2Name[tc.id] = tc.function.name;
                     }
                 }
             }
-            
-            if (lastMessage && lastMessage.role === geminiRole && !message.tool_calls &&
-                Array.isArray(processedContent) && processedContent.every(p => p.text) &&
-                Array.isArray(lastMessage.parts) && lastMessage.parts.every(p => p.text)) {
-                lastMessage.parts.push(...processedContent);
-                continue;
-            }
-            
-            if (lastMessage) processedMessages.push(lastMessage);
-            lastMessage = { role: geminiRole, parts: processedContent };
         }
-        if (lastMessage) processedMessages.push(lastMessage);
-        
+
+        // 构建 tool_call_id -> response 映射
+        const toolResponses = {};
+        for (const message of messages) {
+            if (message.role === 'tool' && message.tool_call_id) {
+                toolResponses[message.tool_call_id] = message.content;
+            }
+        }
+
+        const processedMessages = [];
+        let systemInstruction = null;
+
+        for (let i = 0; i < messages.length; i++) {
+            const message = messages[i];
+            const role = message.role;
+            const content = message.content;
+
+            if (role === 'system') {
+                // system -> system_instruction
+                if (messages.length > 1) {
+                    if (typeof content === 'string') {
+                        systemInstruction = {
+                            role: 'user',
+                            parts: [{ text: content }]
+                        };
+                    } else if (Array.isArray(content)) {
+                        const parts = content
+                            .filter(item => item.type === 'text' && item.text)
+                            .map(item => ({ text: item.text }));
+                        if (parts.length > 0) {
+                            systemInstruction = {
+                                role: 'user',
+                                parts: parts
+                            };
+                        }
+                    } else if (typeof content === 'object' && content.type === 'text') {
+                        systemInstruction = {
+                            role: 'user',
+                            parts: [{ text: content.text }]
+                        };
+                    }
+                } else {
+                    // 只有一条 system 消息时，作为 user 消息处理
+                    const node = { role: 'user', parts: [] };
+                    if (typeof content === 'string') {
+                        node.parts.push({ text: content });
+                    } else if (Array.isArray(content)) {
+                        for (const item of content) {
+                            if (item.type === 'text' && item.text) {
+                                node.parts.push({ text: item.text });
+                            }
+                        }
+                    }
+                    if (node.parts.length > 0) {
+                        processedMessages.push(node);
+                    }
+                }
+            } else if (role === 'user') {
+                // user -> user content
+                const node = { role: 'user', parts: [] };
+                if (typeof content === 'string') {
+                    node.parts.push({ text: content });
+                } else if (Array.isArray(content)) {
+                    for (const item of content) {
+                        if (!item) continue;
+                        switch (item.type) {
+                            case 'text':
+                                if (item.text) {
+                                    node.parts.push({ text: item.text });
+                                }
+                                break;
+                            case 'image_url':
+                                if (item.image_url) {
+                                    const imageUrl = typeof item.image_url === 'string'
+                                        ? item.image_url
+                                        : item.image_url.url;
+                                    if (imageUrl && imageUrl.startsWith('data:')) {
+                                        const commaIndex = imageUrl.indexOf(',');
+                                        if (commaIndex > 5) {
+                                            const header = imageUrl.substring(5, commaIndex);
+                                            const semicolonIndex = header.indexOf(';');
+                                            if (semicolonIndex > 0) {
+                                                const mimeType = header.substring(0, semicolonIndex);
+                                                const data = imageUrl.substring(commaIndex + 1);
+                                                node.parts.push({
+                                                    inlineData: {
+                                                        mimeType: mimeType,
+                                                        data: data
+                                                    },
+                                                    thoughtSignature: OpenAIConverter.GEMINI_OPENAI_THOUGHT_SIGNATURE
+                                                });
+                                            }
+                                        }
+                                    } else if (imageUrl) {
+                                        node.parts.push({
+                                            fileData: {
+                                                mimeType: 'image/jpeg',
+                                                fileUri: imageUrl
+                                            }
+                                        });
+                                    }
+                                }
+                                break;
+                            case 'file':
+                                if (item.file) {
+                                    const filename = item.file.filename || '';
+                                    const fileData = item.file.file_data || '';
+                                    const ext = filename.includes('.')
+                                        ? filename.split('.').pop().toLowerCase()
+                                        : '';
+                                    const mimeTypes = {
+                                        'pdf': 'application/pdf',
+                                        'txt': 'text/plain',
+                                        'html': 'text/html',
+                                        'css': 'text/css',
+                                        'js': 'application/javascript',
+                                        'json': 'application/json',
+                                        'xml': 'application/xml',
+                                        'csv': 'text/csv',
+                                        'md': 'text/markdown',
+                                        'py': 'text/x-python',
+                                        'java': 'text/x-java',
+                                        'c': 'text/x-c',
+                                        'cpp': 'text/x-c++',
+                                        'h': 'text/x-c',
+                                        'hpp': 'text/x-c++',
+                                        'go': 'text/x-go',
+                                        'rs': 'text/x-rust',
+                                        'ts': 'text/typescript',
+                                        'tsx': 'text/typescript',
+                                        'jsx': 'text/javascript',
+                                        'png': 'image/png',
+                                        'jpg': 'image/jpeg',
+                                        'jpeg': 'image/jpeg',
+                                        'gif': 'image/gif',
+                                        'webp': 'image/webp',
+                                        'svg': 'image/svg+xml',
+                                        'mp3': 'audio/mpeg',
+                                        'wav': 'audio/wav',
+                                        'mp4': 'video/mp4',
+                                        'webm': 'video/webm'
+                                    };
+                                    const mimeType = mimeTypes[ext];
+                                    if (mimeType && fileData) {
+                                        node.parts.push({
+                                            inlineData: {
+                                                mimeType: mimeType,
+                                                data: fileData
+                                            }
+                                        });
+                                    }
+                                }
+                                break;
+                        }
+                    }
+                }
+                if (node.parts.length > 0) {
+                    processedMessages.push(node);
+                }
+            } else if (role === 'assistant') {
+                // assistant -> model content
+                const node = { role: 'model', parts: [] };
+                
+                // 处理文本内容
+                if (typeof content === 'string' && content) {
+                    node.parts.push({ text: content });
+                } else if (Array.isArray(content)) {
+                    for (const item of content) {
+                        if (!item) continue;
+                        if (item.type === 'text' && item.text) {
+                            node.parts.push({ text: item.text });
+                        } else if (item.type === 'image_url' && item.image_url) {
+                            const imageUrl = typeof item.image_url === 'string'
+                                ? item.image_url
+                                : item.image_url.url;
+                            if (imageUrl && imageUrl.startsWith('data:')) {
+                                const commaIndex = imageUrl.indexOf(',');
+                                if (commaIndex > 5) {
+                                    const header = imageUrl.substring(5, commaIndex);
+                                    const semicolonIndex = header.indexOf(';');
+                                    if (semicolonIndex > 0) {
+                                        const mimeType = header.substring(0, semicolonIndex);
+                                        const data = imageUrl.substring(commaIndex + 1);
+                                        node.parts.push({
+                                            inlineData: {
+                                                mimeType: mimeType,
+                                                data: data
+                                            },
+                                            thoughtSignature: OpenAIConverter.GEMINI_OPENAI_THOUGHT_SIGNATURE
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 处理 tool_calls -> functionCall
+                if (message.tool_calls && Array.isArray(message.tool_calls)) {
+                    const functionCallIds = [];
+                    for (const tc of message.tool_calls) {
+                        if (tc.type !== 'function') continue;
+                        const fid = tc.id || '';
+                        const fname = tc.function?.name || '';
+                        const fargs = tc.function?.arguments || '{}';
+                        
+                        let argsObj;
+                        try {
+                            argsObj = typeof fargs === 'string' ? JSON.parse(fargs) : fargs;
+                        } catch (e) {
+                            argsObj = {};
+                        }
+                        
+                        node.parts.push({
+                            functionCall: {
+                                name: fname,
+                                args: argsObj
+                            },
+                            thoughtSignature: OpenAIConverter.GEMINI_OPENAI_THOUGHT_SIGNATURE
+                        });
+                        
+                        if (fid) {
+                            functionCallIds.push(fid);
+                        }
+                    }
+                    
+                    // 添加 model 消息
+                    if (node.parts.length > 0) {
+                        processedMessages.push(node);
+                    }
+                    
+                    // 添加对应的 functionResponse（作为 user 消息）
+                    if (functionCallIds.length > 0) {
+                        const toolNode = { role: 'user', parts: [] };
+                        for (const fid of functionCallIds) {
+                            const name = tcID2Name[fid];
+                            if (name) {
+                                let resp = toolResponses[fid] || '{}';
+                                // 确保 resp 是字符串
+                                if (typeof resp !== 'string') {
+                                    resp = JSON.stringify(resp);
+                                }
+                                toolNode.parts.push({
+                                    functionResponse: {
+                                        name: name,
+                                        response: {
+                                            result: resp
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        if (toolNode.parts.length > 0) {
+                            processedMessages.push(toolNode);
+                        }
+                    }
+                } else {
+                    // 没有 tool_calls，直接添加
+                    if (node.parts.length > 0) {
+                        processedMessages.push(node);
+                    }
+                }
+            }
+            // tool 消息已经在 assistant 的 tool_calls 处理中合并了，这里跳过
+        }
+
+        // 构建 Gemini 请求
         const geminiRequest = {
             contents: processedMessages.filter(item => item.parts && item.parts.length > 0)
         };
-        
-        if (systemInstruction) geminiRequest.systemInstruction = systemInstruction;
-        
-        if (openaiRequest.tools?.length) {
-            geminiRequest.tools = [{
-                functionDeclarations: openaiRequest.tools.map(t => {
-                    if (!t || typeof t !== 'object' || !t.function) return null;
-                    const func = t.function;
-                    const parameters = cleanJsonSchema(func.parameters || {});
-                    return {
-                        name: String(func.name || ''),
-                        description: String(func.description || ''),
-                        parameters: parameters
-                    };
-                }).filter(Boolean)
-            }];
-            if (geminiRequest.tools[0].functionDeclarations.length === 0) {
-                delete geminiRequest.tools;
+
+        // 添加 model
+        if (model) {
+            geminiRequest.model = model;
+        }
+
+        // 添加 system_instruction
+        if (systemInstruction) {
+            geminiRequest.system_instruction = systemInstruction;
+        }
+
+        // 处理 reasoning_effort -> thinkingConfig
+        if (openaiRequest.reasoning_effort) {
+            const effort = String(openaiRequest.reasoning_effort).toLowerCase().trim();
+            if (this.modelSupportsThinking(model)) {
+                if (this.isGemini3Model(model)) {
+                    // Gemini 3 模型使用 thinkingLevel
+                    if (effort === 'none') {
+                        // 不添加 thinkingConfig
+                    } else if (effort === 'auto') {
+                        geminiRequest.generationConfig = geminiRequest.generationConfig || {};
+                        geminiRequest.generationConfig.thinkingConfig = {
+                            includeThoughts: true
+                        };
+                    } else {
+                        const level = this.validateGemini3ThinkingLevel(model, effort);
+                        if (level) {
+                            geminiRequest.generationConfig = geminiRequest.generationConfig || {};
+                            geminiRequest.generationConfig.thinkingConfig = {
+                                thinkingLevel: level
+                            };
+                        }
+                    }
+                } else if (!this.modelUsesThinkingLevels(model)) {
+                    // 使用 thinkingBudget 的模型
+                    geminiRequest.generationConfig = geminiRequest.generationConfig || {};
+                    geminiRequest.generationConfig.thinkingConfig = this.applyReasoningEffortToGemini(effort);
+                }
             }
         }
-        
+
+        // 处理 extra_body.google.thinking_config（Cherry Studio 扩展）
+        if (!openaiRequest.reasoning_effort && openaiRequest.extra_body?.google?.thinking_config) {
+            const tc = openaiRequest.extra_body.google.thinking_config;
+            if (this.modelSupportsThinking(model) && !this.modelUsesThinkingLevels(model)) {
+                geminiRequest.generationConfig = geminiRequest.generationConfig || {};
+                geminiRequest.generationConfig.thinkingConfig = geminiRequest.generationConfig.thinkingConfig || {};
+                
+                let setBudget = false;
+                let budget = 0;
+                
+                if (tc.thinkingBudget !== undefined) {
+                    budget = parseInt(tc.thinkingBudget, 10);
+                    geminiRequest.generationConfig.thinkingConfig.thinkingBudget = budget;
+                    setBudget = true;
+                } else if (tc.thinking_budget !== undefined) {
+                    budget = parseInt(tc.thinking_budget, 10);
+                    geminiRequest.generationConfig.thinkingConfig.thinkingBudget = budget;
+                    setBudget = true;
+                }
+                
+                if (tc.includeThoughts !== undefined) {
+                    geminiRequest.generationConfig.thinkingConfig.includeThoughts = tc.includeThoughts;
+                } else if (tc.include_thoughts !== undefined) {
+                    geminiRequest.generationConfig.thinkingConfig.includeThoughts = tc.include_thoughts;
+                } else if (setBudget && budget !== 0) {
+                    geminiRequest.generationConfig.thinkingConfig.includeThoughts = true;
+                }
+            }
+        }
+
+        // 处理 modalities -> responseModalities
+        if (openaiRequest.modalities && Array.isArray(openaiRequest.modalities)) {
+            const responseMods = [];
+            for (const m of openaiRequest.modalities) {
+                const mod = String(m).toLowerCase();
+                if (mod === 'text') {
+                    responseMods.push('TEXT');
+                } else if (mod === 'image') {
+                    responseMods.push('IMAGE');
+                }
+            }
+            if (responseMods.length > 0) {
+                geminiRequest.generationConfig = geminiRequest.generationConfig || {};
+                geminiRequest.generationConfig.responseModalities = responseMods;
+            }
+        }
+
+        // 处理 image_config（OpenRouter 风格）
+        if (openaiRequest.image_config) {
+            const imgCfg = openaiRequest.image_config;
+            if (imgCfg.aspect_ratio) {
+                geminiRequest.generationConfig = geminiRequest.generationConfig || {};
+                geminiRequest.generationConfig.imageConfig = geminiRequest.generationConfig.imageConfig || {};
+                geminiRequest.generationConfig.imageConfig.aspectRatio = imgCfg.aspect_ratio;
+            }
+            if (imgCfg.image_size) {
+                geminiRequest.generationConfig = geminiRequest.generationConfig || {};
+                geminiRequest.generationConfig.imageConfig = geminiRequest.generationConfig.imageConfig || {};
+                geminiRequest.generationConfig.imageConfig.imageSize = imgCfg.image_size;
+            }
+        }
+
+        // 处理 tools -> functionDeclarations
+        if (openaiRequest.tools?.length) {
+            const functionDeclarations = [];
+            let hasGoogleSearch = false;
+            
+            for (const t of openaiRequest.tools) {
+                if (!t || typeof t !== 'object') continue;
+                
+                if (t.type === 'function' && t.function) {
+                    const func = t.function;
+                    let fnDecl = {
+                        name: String(func.name || ''),
+                        description: String(func.description || '')
+                    };
+                    
+                    // 处理 parameters -> parametersJsonSchema
+                    if (func.parameters) {
+                        fnDecl.parametersJsonSchema = cleanJsonSchema(func.parameters);
+                    } else {
+                        fnDecl.parametersJsonSchema = {
+                            type: 'object',
+                            properties: {}
+                        };
+                    }
+                    
+                    functionDeclarations.push(fnDecl);
+                }
+                
+                // 处理 google_search 工具
+                if (t.google_search) {
+                    hasGoogleSearch = true;
+                }
+            }
+            
+            if (functionDeclarations.length > 0 || hasGoogleSearch) {
+                geminiRequest.tools = [{}];
+                if (functionDeclarations.length > 0) {
+                    geminiRequest.tools[0].functionDeclarations = functionDeclarations;
+                }
+                if (hasGoogleSearch) {
+                    const googleSearchTool = openaiRequest.tools.find(t => t.google_search);
+                    geminiRequest.tools[0].googleSearch = googleSearchTool.google_search;
+                }
+            }
+        }
+
+        // 处理 tool_choice
         if (openaiRequest.tool_choice) {
             geminiRequest.toolConfig = this.buildGeminiToolConfig(openaiRequest.tool_choice);
         }
-        
-        const config = this.buildGeminiGenerationConfig(openaiRequest, openaiRequest.model);
-        if (Object.keys(config).length) geminiRequest.generationConfig = config;
-        
+
+        // 构建 generationConfig
+        const config = this.buildGeminiGenerationConfig(openaiRequest, model);
+        if (Object.keys(config).length) {
+            geminiRequest.generationConfig = {
+                ...config,
+                ...(geminiRequest.generationConfig || {})
+            };
+        }
+
+        // 添加默认安全设置
+        geminiRequest.safetySettings = this.getDefaultSafetySettings();
+
         return geminiRequest;
+    }
+
+    /**
+     * 检查模型是否支持 thinking
+     */
+    modelSupportsThinking(model) {
+        if (!model) return false;
+        const m = model.toLowerCase();
+        return m.includes('2.5') || m.includes('thinking') || m.includes('2.0-flash-thinking');
+    }
+
+    /**
+     * 检查是否是 Gemini 3 模型
+     */
+    isGemini3Model(model) {
+        if (!model) return false;
+        const m = model.toLowerCase();
+        return m.includes('gemini-3') || m.includes('gemini3');
+    }
+
+    /**
+     * 检查模型是否使用 thinking levels（而不是 budget）
+     */
+    modelUsesThinkingLevels(model) {
+        if (!model) return false;
+        // Gemini 3 模型使用 levels，其他使用 budget
+        return this.isGemini3Model(model);
+    }
+
+    /**
+     * 验证 Gemini 3 thinking level
+     */
+    validateGemini3ThinkingLevel(model, effort) {
+        const validLevels = ['low', 'medium', 'high'];
+        if (validLevels.includes(effort)) {
+            return effort.toUpperCase();
+        }
+        return null;
+    }
+
+    /**
+     * 将 reasoning_effort 转换为 Gemini thinkingConfig
+     */
+    applyReasoningEffortToGemini(effort) {
+        const effortToBudget = {
+            'low': 1024,
+            'medium': 8192,
+            'high': 24576
+        };
+        const budget = effortToBudget[effort] || effortToBudget['medium'];
+        return {
+            thinkingBudget: budget,
+            includeThoughts: true
+        };
+    }
+
+    /**
+     * 获取默认安全设置
+     */
+    getDefaultSafetySettings() {
+        return [
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "OFF" },
+            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "OFF" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "OFF" },
+            { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "OFF" }
+        ];
     }
 
     /**
@@ -663,20 +1096,20 @@ export class OpenAIConverter extends BaseConverter {
     processOpenAIContentToGeminiParts(content) {
         if (!content) return [];
         if (typeof content === 'string') return [{ text: content }];
-        
+
         if (Array.isArray(content)) {
             const parts = [];
-            
+
             for (const item of content) {
                 if (!item) continue;
-                
+
                 if (item.type === 'text' && item.text) {
                     parts.push({ text: item.text });
                 } else if (item.type === 'image_url' && item.image_url) {
                     const imageUrl = typeof item.image_url === 'string'
                         ? item.image_url
                         : item.image_url.url;
-                        
+
                     if (imageUrl.startsWith('data:')) {
                         const [header, data] = imageUrl.split(',');
                         const mimeType = header.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
@@ -688,10 +1121,10 @@ export class OpenAIConverter extends BaseConverter {
                     }
                 }
             }
-            
+
             return parts;
         }
-        
+
         return [];
     }
 
@@ -711,13 +1144,25 @@ export class OpenAIConverter extends BaseConverter {
     /**
      * 构建Gemini生成配置
      */
-    buildGeminiGenerationConfig({ temperature, max_tokens, top_p, stop, tools }, model) {
+    buildGeminiGenerationConfig({ temperature, max_tokens, top_p, stop, tools, response_format }, model) {
         const config = {};
-        config.temperature = checkAndAssignOrDefault(temperature, 1);
-        config.maxOutputTokens = checkAndAssignOrDefault(max_tokens, 65535);
-        config.topP = checkAndAssignOrDefault(top_p, 0.95);
+        config.temperature = checkAndAssignOrDefault(temperature, GEMINI_DEFAULT_TEMPERATURE);
+        config.maxOutputTokens = checkAndAssignOrDefault(max_tokens, GEMINI_DEFAULT_MAX_TOKENS);
+        config.topP = checkAndAssignOrDefault(top_p, GEMINI_DEFAULT_TOP_P);
         if (stop !== undefined) config.stopSequences = Array.isArray(stop) ? stop : [stop];
-        
+
+        // Handle response_format
+        if (response_format) {
+            if (response_format.type === 'json_object') {
+                config.responseMimeType = 'application/json';
+            } else if (response_format.type === 'json_schema' && response_format.json_schema) {
+                config.responseMimeType = 'application/json';
+                if (response_format.json_schema.schema) {
+                    config.responseSchema = response_format.json_schema.schema;
+                }
+            }
+        }
+
         // Gemini 2.5 and thinking models require responseModalities: ["TEXT"]
         // But this parameter cannot be added when using tools (causes 400 error)
         const hasTools = tools && Array.isArray(tools) && tools.length > 0;
@@ -727,7 +1172,7 @@ export class OpenAIConverter extends BaseConverter {
         } else if (hasTools && model && (model.includes('2.5') || model.includes('thinking') || model.includes('2.0-flash-thinking'))) {
             console.log(`[OpenAI->Gemini] Skipping responseModalities for model ${model} because tools are present`);
         }
-        
+
         return config;
     }
     /**
@@ -822,7 +1267,7 @@ export class OpenAIConverter extends BaseConverter {
                         name: toolCall.function.name || '',
                         args: {}
                     };
-                    
+
                     if (toolCall.function.arguments) {
                         try {
                             functionCall.args = typeof toolCall.function.arguments === 'string'
@@ -833,7 +1278,7 @@ export class OpenAIConverter extends BaseConverter {
                             functionCall.args = { partial: toolCall.function.arguments };
                         }
                     }
-                    
+
                     parts.push({ functionCall });
                 }
             }
@@ -894,7 +1339,7 @@ export class OpenAIConverter extends BaseConverter {
         if (openaiRequest.messages && openaiRequest.messages.length > 0) {
             responsesRequest.messages = openaiRequest.messages.map(msg => ({
                 role: msg.role,
-                content: typeof msg.content === 'string' 
+                content: typeof msg.content === 'string'
                     ? [{ type: 'input_text', text: msg.content }]
                     : msg.content
             }));
@@ -1031,7 +1476,7 @@ export class OpenAIConverter extends BaseConverter {
         if (delta.tool_calls && delta.tool_calls.length > 0) {
             for (const toolCall of delta.tool_calls) {
                 const outputIndex = toolCall.index || 0;
-                
+
                 // 如果有 function.name，说明是工具调用开始
                 if (toolCall.function && toolCall.function.name) {
                     events.push({
@@ -1047,7 +1492,7 @@ export class OpenAIConverter extends BaseConverter {
                         type: "response.output_item.added"
                     });
                 }
-                
+
                 // 如果有 function.arguments，说明是参数增量
                 if (toolCall.function && toolCall.function.arguments) {
                     events.push({
@@ -1080,7 +1525,7 @@ export class OpenAIConverter extends BaseConverter {
                 generateOutputItemDone(responseId),
                 generateResponseCompleted(responseId)
             );
-            
+
             // 如果有 usage 信息，更新最后一个事件
             if (openaiChunk.usage && events.length > 0) {
                 const lastEvent = events[events.length - 1];

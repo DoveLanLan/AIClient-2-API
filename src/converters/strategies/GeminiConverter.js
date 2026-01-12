@@ -6,9 +6,15 @@
 import { v4 as uuidv4 } from 'uuid';
 import { BaseConverter } from '../BaseConverter.js';
 import {
-    checkAndAssignOrDefault
+    checkAndAssignOrDefault,
+    OPENAI_DEFAULT_MAX_TOKENS,
+    OPENAI_DEFAULT_TEMPERATURE,
+    OPENAI_DEFAULT_TOP_P,
+    CLAUDE_DEFAULT_MAX_TOKENS,
+    CLAUDE_DEFAULT_TEMPERATURE,
+    CLAUDE_DEFAULT_TOP_P
 } from '../utils.js';
-import { MODEL_PROTOCOL_PREFIX } from '../../common.js';
+import { MODEL_PROTOCOL_PREFIX } from '../../utils/common.js';
 import {
     generateResponseCreated,
     generateResponseInProgress,
@@ -18,7 +24,7 @@ import {
     generateContentPartDone,
     generateOutputItemDone,
     generateResponseCompleted
-} from '../../openai/openai-responses-core.mjs';
+} from '../../providers/openai/openai-responses-core.mjs';
 
 /**
  * Gemini转换器类
@@ -102,9 +108,9 @@ export class GeminiConverter extends BaseConverter {
         const openaiRequest = {
             messages: [],
             model: geminiRequest.model,
-            max_tokens: checkAndAssignOrDefault(geminiRequest.max_tokens, 8192),
-            temperature: checkAndAssignOrDefault(geminiRequest.temperature, 1),
-            top_p: checkAndAssignOrDefault(geminiRequest.top_p, 0.95),
+            max_tokens: checkAndAssignOrDefault(geminiRequest.max_tokens, OPENAI_DEFAULT_MAX_TOKENS),
+            temperature: checkAndAssignOrDefault(geminiRequest.temperature, OPENAI_DEFAULT_TEMPERATURE),
+            top_p: checkAndAssignOrDefault(geminiRequest.top_p, OPENAI_DEFAULT_TOP_P),
         };
 
         // 处理系统指令
@@ -203,6 +209,7 @@ export class GeminiConverter extends BaseConverter {
                 }
                 if (part.functionCall) {
                     toolCalls.push({
+                        index: toolCalls.length,
                         id: part.functionCall.id || `call_${uuidv4()}`,
                         type: 'function',
                         function: {
@@ -223,6 +230,11 @@ export class GeminiConverter extends BaseConverter {
             finishReason = candidate.finishReason === 'STOP' ? 'stop' :
                          candidate.finishReason === 'MAX_TOKENS' ? 'length' :
                          candidate.finishReason.toLowerCase();
+        }
+
+        // 如果包含工具调用，且完成原因为 stop，则将完成原因修改为 tool_calls
+        if (toolCalls.length > 0 && finishReason === 'stop') {
+            finishReason = 'tool_calls';
         }
 
         // 构建delta对象
@@ -277,12 +289,16 @@ export class GeminiConverter extends BaseConverter {
     toOpenAIModelList(geminiModels) {
         return {
             object: "list",
-            data: geminiModels.models.map(m => ({
-                id: m.name.startsWith('models/') ? m.name.substring(7) : m.name,
-                object: "model",
-                created: Math.floor(Date.now() / 1000),
-                owned_by: "google",
-            })),
+            data: geminiModels.models.map(m => {
+                const modelId = m.name.startsWith('models/') ? m.name.substring(7) : m.name;
+                return {
+                    id: modelId,
+                    object: "model",
+                    created: Math.floor(Date.now() / 1000),
+                    owned_by: "google",
+                    display_name: m.displayName || modelId,
+                };
+            }),
         };
     }
 
@@ -373,9 +389,9 @@ export class GeminiConverter extends BaseConverter {
         const claudeRequest = {
             model: geminiRequest.model || 'claude-3-opus',
             messages: [],
-            max_tokens: checkAndAssignOrDefault(geminiRequest.generationConfig?.maxOutputTokens, 8192),
-            temperature: checkAndAssignOrDefault(geminiRequest.generationConfig?.temperature, 1),
-            top_p: checkAndAssignOrDefault(geminiRequest.generationConfig?.topP, 0.95),
+            max_tokens: checkAndAssignOrDefault(geminiRequest.generationConfig?.maxOutputTokens, CLAUDE_DEFAULT_MAX_TOKENS),
+            temperature: checkAndAssignOrDefault(geminiRequest.generationConfig?.temperature, CLAUDE_DEFAULT_TEMPERATURE),
+            top_p: checkAndAssignOrDefault(geminiRequest.generationConfig?.topP, CLAUDE_DEFAULT_TOP_P),
         };
 
         // 处理系统指令
@@ -678,9 +694,9 @@ export class GeminiConverter extends BaseConverter {
     toOpenAIResponsesRequest(geminiRequest) {
         const responsesRequest = {
             model: geminiRequest.model,
-            max_tokens: checkAndAssignOrDefault(geminiRequest.generationConfig?.maxOutputTokens, 8192),
-            temperature: checkAndAssignOrDefault(geminiRequest.generationConfig?.temperature, 1),
-            top_p: checkAndAssignOrDefault(geminiRequest.generationConfig?.topP, 0.95),
+            max_tokens: checkAndAssignOrDefault(geminiRequest.generationConfig?.maxOutputTokens, OPENAI_DEFAULT_MAX_TOKENS),
+            temperature: checkAndAssignOrDefault(geminiRequest.generationConfig?.temperature, OPENAI_DEFAULT_TEMPERATURE),
+            top_p: checkAndAssignOrDefault(geminiRequest.generationConfig?.topP, OPENAI_DEFAULT_TOP_P),
         };
 
         // 处理系统指令

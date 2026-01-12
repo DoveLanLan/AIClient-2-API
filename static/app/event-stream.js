@@ -1,6 +1,7 @@
 // Server-Sent Events处理模块
 
 import { eventSource, setEventSource, elements, addLog, autoScroll } from './constants.js';
+import { t } from './i18n.js';
 
 /**
  * Server-Sent Events初始化
@@ -31,6 +32,13 @@ function initEventStream() {
     newEventSource.addEventListener('provider', (event) => {
         const data = JSON.parse(event.data);
         updateProviderStatus(data);
+    });
+
+    newEventSource.addEventListener('oauth_success', (event) => {
+        const data = JSON.parse(event.data);
+        showToast(t('common.success'), `${t('common.success')} (${data.provider})`, 'success');
+        // 发送自定义事件，以便其他模块（如生成凭据逻辑）可以接收到详细信息
+        window.dispatchEvent(new CustomEvent('oauth_success_event', { detail: data }));
     });
 
     newEventSource.addEventListener('provider_update', (event) => {
@@ -86,11 +94,11 @@ function updateServerStatus(connected) {
     if (connected) {
         statusBadge.classList.remove('error');
         icon.style.color = 'var(--success-color)';
-        statusBadge.innerHTML = '<i class="fas fa-circle"></i> 已连接';
+        statusBadge.innerHTML = `<i class="fas fa-circle"></i> <span data-i18n="header.status.connected">${t('header.status.connected')}</span>`;
     } else {
         statusBadge.classList.add('error');
         icon.style.color = 'var(--danger-color)';
-        statusBadge.innerHTML = '<i class="fas fa-circle"></i> 连接断开';
+        statusBadge.innerHTML = `<i class="fas fa-circle"></i> <span data-i18n="header.status.disconnected">${t('header.status.disconnected')}</span>`;
     }
 }
 
@@ -127,7 +135,7 @@ function handleProviderUpdate(data) {
 }
 
 // 导入工具函数
-import { escapeHtml } from './utils.js';
+import { escapeHtml, showToast } from './utils.js';
 
 // 需要从其他模块导入的函数
 let loadProviders;

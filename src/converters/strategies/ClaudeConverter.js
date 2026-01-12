@@ -8,9 +8,17 @@ import { BaseConverter } from '../BaseConverter.js';
 import {
     checkAndAssignOrDefault,
     cleanJsonSchemaProperties as cleanJsonSchema,
-    determineReasoningEffortFromBudget
+    determineReasoningEffortFromBudget,
+    OPENAI_DEFAULT_MAX_TOKENS,
+    OPENAI_DEFAULT_TEMPERATURE,
+    OPENAI_DEFAULT_TOP_P,
+    GEMINI_DEFAULT_MAX_TOKENS,
+    GEMINI_DEFAULT_TEMPERATURE,
+    GEMINI_DEFAULT_TOP_P,
+    GEMINI_DEFAULT_INPUT_TOKEN_LIMIT,
+    GEMINI_DEFAULT_OUTPUT_TOKEN_LIMIT
 } from '../utils.js';
-import { MODEL_PROTOCOL_PREFIX } from '../../common.js';
+import { MODEL_PROTOCOL_PREFIX } from '../../utils/common.js';
 import {
     generateResponseCreated,
     generateResponseInProgress,
@@ -20,7 +28,7 @@ import {
     generateContentPartDone,
     generateOutputItemDone,
     generateResponseCompleted
-} from '../../openai/openai-responses-core.mjs';
+} from '../../providers/openai/openai-responses-core.mjs';
 
 /**
  * Claude转换器类
@@ -202,9 +210,9 @@ export class ClaudeConverter extends BaseConverter {
         const openaiRequest = {
             model: claudeRequest.model,
             messages: openaiMessages,
-            max_tokens: checkAndAssignOrDefault(claudeRequest.max_tokens, 8192),
-            temperature: checkAndAssignOrDefault(claudeRequest.temperature, 1),
-            top_p: checkAndAssignOrDefault(claudeRequest.top_p, 0.95),
+            max_tokens: checkAndAssignOrDefault(claudeRequest.max_tokens, OPENAI_DEFAULT_MAX_TOKENS),
+            temperature: checkAndAssignOrDefault(claudeRequest.temperature, OPENAI_DEFAULT_TEMPERATURE),
+            top_p: checkAndAssignOrDefault(claudeRequest.top_p, OPENAI_DEFAULT_TOP_P),
             stream: claudeRequest.stream,
         };
 
@@ -599,12 +607,16 @@ export class ClaudeConverter extends BaseConverter {
     toOpenAIModelList(claudeModels) {
         return {
             object: "list",
-            data: claudeModels.models.map(m => ({
-                id: m.id || m.name,
-                object: "model",
-                created: Math.floor(Date.now() / 1000),
-                owned_by: "anthropic",
-            })),
+            data: claudeModels.models.map(m => {
+                const modelId = m.id || m.name;
+                return {
+                    id: modelId,
+                    object: "model",
+                    created: Math.floor(Date.now() / 1000),
+                    owned_by: "anthropic",
+                    display_name: modelId,
+                };
+            }),
         };
     }
 
@@ -619,8 +631,8 @@ export class ClaudeConverter extends BaseConverter {
                 version: m.version || "1.0.0",
                 displayName: m.displayName || m.id || m.name,
                 description: m.description || `A generative model for text and chat generation. ID: ${m.id || m.name}`,
-                inputTokenLimit: m.inputTokenLimit || 32768,
-                outputTokenLimit: m.outputTokenLimit || 8192,
+                inputTokenLimit: m.inputTokenLimit || GEMINI_DEFAULT_INPUT_TOKEN_LIMIT,
+                outputTokenLimit: m.outputTokenLimit || GEMINI_DEFAULT_OUTPUT_TOKEN_LIMIT,
                 supportedGenerationMethods: m.supportedGenerationMethods || ["generateContent", "streamGenerateContent"]
             }))
         };
@@ -734,6 +746,9 @@ export class ClaudeConverter extends BaseConverter {
     // Claude -> Gemini 转换
     // =========================================================================
 
+    // Gemini Claude thought signature constant
+    static GEMINI_CLAUDE_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
+
     /**
      * Claude请求 -> Gemini请求
      */
@@ -747,40 +762,148 @@ export class ClaudeConverter extends BaseConverter {
             contents: []
         };
 
-        // 处理系统指令
+        // 处理系统指令 - 支持数组和字符串格式
         if (claudeRequest.system) {
-            let incomingSystemText = null;
-            if (typeof claudeRequest.system === 'string') {
-                incomingSystemText = claudeRequest.system;
+            if (Array.isArray(claudeRequest.system)) {
+                // 数组格式的系统指令
+                const systemParts = [];
+                claudeRequest.system.forEach(systemPrompt => {
+                    if (systemPrompt && systemPrompt.type === 'text' && typeof systemPrompt.text === 'string') {
+                        systemParts.push({ text: systemPrompt.text });
+                    }
+                });
+                if (systemParts.length > 0) {
+                    geminiRequest.systemInstruction = {
+                        role: 'user',
+                        parts: systemParts
+                    };
+                }
+            } else if (typeof claudeRequest.system === 'string') {
+                // 字符串格式的系统指令
+                geminiRequest.systemInstruction = {
+                    parts: [{ text: claudeRequest.system }]
+                };
             } else if (typeof claudeRequest.system === 'object') {
-                incomingSystemText = JSON.stringify(claudeRequest.system);
+                // 对象格式的系统指令
+                geminiRequest.systemInstruction = {
+                    parts: [{ text: JSON.stringify(claudeRequest.system) }]
+                };
             }
-            geminiRequest.systemInstruction = {
-                parts: [{ text: incomingSystemText }]
-            };
         }
 
         // 处理消息
         if (Array.isArray(claudeRequest.messages)) {
             claudeRequest.messages.forEach(message => {
-                if (!message || typeof message !== 'object' || !message.role || !message.content) {
+                if (!message || typeof message !== 'object' || !message.role) {
                     console.warn("Skipping invalid message in claudeRequest.messages.");
                     return;
                 }
 
                 const geminiRole = message.role === 'assistant' ? 'model' : 'user';
-                const processedParts = this.processClaudeContentToGeminiParts(message.content);
+                const content = message.content;
 
-                const functionResponsePart = processedParts.find(part => part.functionResponse);
-                if (functionResponsePart) {
-                    geminiRequest.contents.push({
-                        role: 'function',
-                        parts: [functionResponsePart]
+                // 处理内容
+                if (Array.isArray(content)) {
+                    const parts = [];
+                    
+                    content.forEach(block => {
+                        if (!block || typeof block !== 'object') return;
+                        
+                        switch (block.type) {
+                            case 'text':
+                                if (typeof block.text === 'string') {
+                                    parts.push({ text: block.text });
+                                }
+                                break;
+                                
+                            case 'tool_use':
+                                // 转换为 Gemini functionCall 格式
+                                if (block.name && block.input) {
+                                    const args = typeof block.input === 'string'
+                                        ? block.input
+                                        : JSON.stringify(block.input);
+                                    
+                                    // 验证 args 是有效的 JSON 对象
+                                    try {
+                                        const parsedArgs = JSON.parse(args);
+                                        if (parsedArgs && typeof parsedArgs === 'object') {
+                                            parts.push({
+                                                thoughtSignature: ClaudeConverter.GEMINI_CLAUDE_THOUGHT_SIGNATURE,
+                                                functionCall: {
+                                                    name: block.name,
+                                                    args: parsedArgs
+                                                }
+                                            });
+                                        }
+                                    } catch (e) {
+                                        // 如果解析失败，尝试直接使用 input
+                                        if (block.input && typeof block.input === 'object') {
+                                            parts.push({
+                                                thoughtSignature: ClaudeConverter.GEMINI_CLAUDE_THOUGHT_SIGNATURE,
+                                                functionCall: {
+                                                    name: block.name,
+                                                    args: block.input
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                                break;
+                                
+                            case 'tool_result':
+                                // 转换为 Gemini functionResponse 格式
+                                const toolCallId = block.tool_use_id;
+                                if (toolCallId) {
+                                    // 从 tool_use_id 中提取函数名
+                                    // 格式通常是 "funcName-uuid" 或直接是函数名
+                                    let funcName = toolCallId;
+                                    const toolCallIdParts = toolCallId.split('-');
+                                    if (toolCallIdParts.length > 1) {
+                                        // 移除最后一个部分（UUID），保留函数名
+                                        funcName = toolCallIdParts.slice(0, -1).join('-');
+                                    }
+                                    
+                                    // 获取响应数据
+                                    let responseData = block.content;
+                                    if (typeof responseData !== 'string') {
+                                        responseData = JSON.stringify(responseData);
+                                    }
+                                    
+                                    parts.push({
+                                        functionResponse: {
+                                            name: funcName,
+                                            response: {
+                                                result: responseData
+                                            }
+                                        }
+                                    });
+                                }
+                                break;
+                                
+                            case 'image':
+                                if (block.source && block.source.type === 'base64') {
+                                    parts.push({
+                                        inlineData: {
+                                            mimeType: block.source.media_type,
+                                            data: block.source.data
+                                        }
+                                    });
+                                }
+                                break;
+                        }
                     });
-                } else if (processedParts.length > 0) {
+                    
+                    if (parts.length > 0) {
+                        geminiRequest.contents.push({
+                            role: geminiRole,
+                            parts: parts
+                        });
+                    }
+                } else if (typeof content === 'string') {
+                    // 字符串内容
                     geminiRequest.contents.push({
                         role: geminiRole,
-                        parts: processedParts
+                        parts: [{ text: content }]
                     });
                 }
             });
@@ -788,36 +911,74 @@ export class ClaudeConverter extends BaseConverter {
 
         // 添加生成配置
         const generationConfig = {};
-        generationConfig.maxOutputTokens = checkAndAssignOrDefault(claudeRequest.max_tokens, 65535);
-        generationConfig.temperature = checkAndAssignOrDefault(claudeRequest.temperature, 1);
-        generationConfig.topP = checkAndAssignOrDefault(claudeRequest.top_p, 0.95);
+        
+        if (claudeRequest.max_tokens !== undefined) {
+            generationConfig.maxOutputTokens = claudeRequest.max_tokens;
+        }
+        if (claudeRequest.temperature !== undefined) {
+            generationConfig.temperature = claudeRequest.temperature;
+        }
+        if (claudeRequest.top_p !== undefined) {
+            generationConfig.topP = claudeRequest.top_p;
+        }
+        if (claudeRequest.top_k !== undefined) {
+            generationConfig.topK = claudeRequest.top_k;
+        }
+        
+        // 处理 thinking 配置 - 转换为 Gemini thinkingBudget
+        if (claudeRequest.thinking && claudeRequest.thinking.type === 'enabled') {
+            if (claudeRequest.thinking.budget_tokens !== undefined) {
+                const budget = claudeRequest.thinking.budget_tokens;
+                if (!generationConfig.thinkingConfig) {
+                    generationConfig.thinkingConfig = {};
+                }
+                generationConfig.thinkingConfig.thinkingBudget = budget;
+                generationConfig.thinkingConfig.include_thoughts = true;
+            }
+        }
         
         if (Object.keys(generationConfig).length > 0) {
             geminiRequest.generationConfig = generationConfig;
         }
 
-        // 处理工具
-        if (Array.isArray(claudeRequest.tools)) {
-            geminiRequest.tools = [{
-                functionDeclarations: claudeRequest.tools.map(tool => {
-                    if (!tool || typeof tool !== 'object' || !tool.name) {
-                        console.warn("Skipping invalid tool declaration in claudeRequest.tools.");
-                        return null;
-                    }
-
-                    delete tool.input_schema.$schema;
-                    return {
-                        name: String(tool.name),
-                        description: String(tool.description || ''),
-                        parameters: tool.input_schema && typeof tool.input_schema === 'object' 
-                            ? tool.input_schema 
-                            : { type: 'object', properties: {} }
-                    };
-                }).filter(Boolean)
-            }];
+        // 处理工具 - 使用 parametersJsonSchema 格式
+        if (Array.isArray(claudeRequest.tools) && claudeRequest.tools.length > 0) {
+            const functionDeclarations = [];
             
-            if (geminiRequest.tools[0].functionDeclarations.length === 0) {
-                delete geminiRequest.tools;
+            claudeRequest.tools.forEach(tool => {
+                if (!tool || typeof tool !== 'object' || !tool.name) {
+                    console.warn("Skipping invalid tool declaration in claudeRequest.tools.");
+                    return;
+                }
+
+                // 清理 input_schema
+                let inputSchema = tool.input_schema;
+                if (inputSchema && typeof inputSchema === 'object') {
+                    // 创建副本以避免修改原始对象
+                    inputSchema = JSON.parse(JSON.stringify(inputSchema));
+                    // 清理不需要的字段
+                    delete inputSchema.$schema;
+                    // 清理 URL 格式（Gemini 不支持）
+                    this.cleanUrlFormatFromSchema(inputSchema);
+                }
+
+                const funcDecl = {
+                    name: String(tool.name),
+                    description: String(tool.description || '')
+                };
+                
+                // 使用 parametersJsonSchema 而不是 parameters
+                if (inputSchema) {
+                    funcDecl.parametersJsonSchema = inputSchema;
+                }
+                
+                functionDeclarations.push(funcDecl);
+            });
+            
+            if (functionDeclarations.length > 0) {
+                geminiRequest.tools = [{
+                    functionDeclarations: functionDeclarations
+                }];
             }
         }
 
@@ -826,7 +987,53 @@ export class ClaudeConverter extends BaseConverter {
             geminiRequest.toolConfig = this.buildGeminiToolConfigFromClaude(claudeRequest.tool_choice);
         }
 
+        // 添加默认安全设置
+        geminiRequest.safetySettings = this.getDefaultSafetySettings();
+
         return geminiRequest;
+    }
+
+    /**
+     * 清理 JSON Schema 中的 URL 格式
+     * Gemini 不支持 "format": "uri"
+     */
+    cleanUrlFormatFromSchema(schema) {
+        if (!schema || typeof schema !== 'object') return;
+        
+        // 如果是属性对象，检查并清理 format
+        if (schema.type === 'string' && schema.format === 'uri') {
+            delete schema.format;
+        }
+        
+        // 递归处理 properties
+        if (schema.properties && typeof schema.properties === 'object') {
+            Object.values(schema.properties).forEach(prop => {
+                this.cleanUrlFormatFromSchema(prop);
+            });
+        }
+        
+        // 递归处理 items（数组类型）
+        if (schema.items) {
+            this.cleanUrlFormatFromSchema(schema.items);
+        }
+        
+        // 递归处理 additionalProperties
+        if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
+            this.cleanUrlFormatFromSchema(schema.additionalProperties);
+        }
+    }
+
+    /**
+     * 获取默认的 Gemini 安全设置
+     */
+    getDefaultSafetySettings() {
+        return [
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "OFF" },
+            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "OFF" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "OFF" },
+            { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "OFF" }
+        ];
     }
 
     /**
@@ -1119,9 +1326,9 @@ export class ClaudeConverter extends BaseConverter {
         // 转换为OpenAI Responses格式
         const responsesRequest = {
             model: claudeRequest.model,
-            max_tokens: checkAndAssignOrDefault(claudeRequest.max_tokens, 8192),
-            temperature: checkAndAssignOrDefault(claudeRequest.temperature, 1),
-            top_p: checkAndAssignOrDefault(claudeRequest.top_p, 0.95),
+            max_tokens: checkAndAssignOrDefault(claudeRequest.max_tokens, OPENAI_DEFAULT_MAX_TOKENS),
+            temperature: checkAndAssignOrDefault(claudeRequest.temperature, OPENAI_DEFAULT_TEMPERATURE),
+            top_p: checkAndAssignOrDefault(claudeRequest.top_p, OPENAI_DEFAULT_TOP_P),
         };
 
         // 处理系统指令

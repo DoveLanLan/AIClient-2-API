@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="src/img/logo-min.webp" alt="logo"  style="width: 128px; height: 128px;margin-bottom: 3px;">
+<img src="src/img/logo-mid.webp" alt="logo"  style="width: 128px; height: 128px;margin-bottom: 3px;">
 
 # AIClient-2-API 🚀
 
-**A powerful proxy that can unify the requests of various large model APIs (Gemini CLI, Qwen Code Plus, Kiro Claude...) that are only used within the client into a local OpenAI compatible interface.**
+**A powerful proxy that can unify the requests of various client-only large model APIs (Gemini CLI, Antigravity, Qwen Code, Kiro ...), simulate requests, and encapsulate them into a local OpenAI-compatible interface.**
 
 </div>
 
@@ -14,14 +14,15 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Node.js](https://img.shields.io/badge/Node.js-≥20.0.0-green.svg)](https://nodejs.org/)
-[![Docker](https://img.shields.io/badge/docker-≥20.0.0-blue.svg)](https://aiproxy.justlikemaki.vip/en/docs/installation/docker-deployment.html)
+[![Docker](https://img.shields.io/badge/docker-≥20.0.0-blue.svg)](https://hub.docker.com/r/justlikemaki/aiclient-2-api)
+[![GitHub stars](https://img.shields.io/github/stars/justlovemaki/AIClient-2-API.svg?style=flat&label=Star)](https://github.com/justlovemaki/AIClient-2-API/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/justlovemaki/AIClient-2-API.svg)](https://github.com/justlovemaki/AIClient-2-API/issues)
 
-
-[**中文**](./README-ZH.md) | [**English**](./README.md) | [**日本語**](./README-JA.md) | [**📚 Complete Documentation**](https://aiproxy.justlikemaki.vip/en/)
+[中文](./README-ZH.md) | [**👉 English**](./README.md) | [日本語](./README-JA.md) | [**📚 Documentation**](https://aiproxy.justlikemaki.vip/en/)
 
 </div>
 
-`AIClient2API` is an API proxy service that breaks through client limitations, converting free large models originally restricted to client use only (such as Gemini CLI, Qwen Code Plus, Kiro Claude) into standard OpenAI-compatible interfaces that can be called by any application. Built on Node.js, it supports intelligent conversion between three major protocols (OpenAI, Claude, Gemini), enabling tools like Cherry-Studio, NextChat, and Cline to freely use advanced models such as Claude Sonnet 4.5, Gemini 2.5 Flash, and Qwen3 Coder Plus at scale. The project adopts a modular architecture based on strategy and adapter patterns, with built-in account pool management, intelligent polling, automatic failover, and health check mechanisms, ensuring 99.9% service availability.
+`AIClient2API` is an API proxy service that breaks through client limitations, converting free large models originally restricted to client use only (such as Gemini, Antigravity, Qwen Code, Kiro) into standard OpenAI-compatible interfaces that can be called by any application. Built on Node.js, it supports intelligent conversion between OpenAI, Claude, and Gemini protocols, enabling tools like Cherry-Studio, NextChat, and Cline to freely use advanced models such as Claude Opus 4.5, Gemini 3.0 Pro, and Qwen3 Coder Plus at scale. The project adopts a modular architecture based on strategy and adapter patterns, with built-in account pool management, intelligent polling, automatic failover, and health check mechanisms, ensuring 99.9% service availability.
 
 > [!NOTE]
 > **🎉 Important Milestone**
@@ -30,6 +31,14 @@
 >
 > **📅 Version Update Log**
 >
+> <details>
+> <summary>Click to expand detailed version history</summary>
+>
+> - **2026.01.07** - Added iFlow protocol support, enabling access to Qwen, Kimi, DeepSeek, and GLM series models via OAuth authentication with automatic token refresh
+> - **2026.01.03** - Added theme switching functionality and optimized provider pool initialization, removed the fallback strategy of using provider default configuration
+> - **2025.12.30** - Added main process management and automatic update functionality
+> - **2025.12.25** - Unified configuration management: All configs centralized to `configs/` directory. Docker users need to update mount path to `-v "local_path:/app/configs"`
+> - **2025.12.11** - Automatically built Docker images are now available on Docker Hub: [justlikemaki/aiclient-2-api](https://hub.docker.com/r/justlikemaki/aiclient-2-api)
 > - **2025.11.30** - Added Antigravity protocol support, enabling access to Gemini 3 Pro, Claude Sonnet 4.5, and other models via Google internal interfaces
 > - **2025.11.16** - Added Ollama protocol support, unified interface to access all supported models (Claude, Gemini, Qwen, OpenAI, etc.)
 > - **2025.11.11** - Added Web UI management console, supporting real-time configuration management and health status monitoring
@@ -37,26 +46,26 @@
 > - **2025.10.18** - Kiro open registration, new accounts get 500 credits, full support for Claude Sonnet 4.5
 > - **2025.09.01** - Integrated Qwen Code CLI, added `qwen3-coder-plus` model support
 > - **2025.08.29** - Released account pool management feature, supporting multi-account polling, intelligent failover, and automatic degradation strategies
->   - Configuration: Add `PROVIDER_POOLS_FILE_PATH` parameter in config.json
->   - Reference configuration: [provider_pools.json](./provider_pools.json.example)
+>   - Configuration: Add `PROVIDER_POOLS_FILE_PATH` parameter in `configs/config.json`
+>   - Reference configuration: [provider_pools.json](./configs/provider_pools.json.example)
+> - **History Developed**
+>   - Support Gemini CLI, Kiro and other client2API
+>   - OpenAI, Claude, Gemini three-protocol mutual conversion, automatic intelligent switching
+> </details>
 
 ---
 
 ## 💡 Core Advantages
 
 ### 🎯 Unified Access, One-Stop Management
-*   **Multi-Model Unified Interface**: Through standard OpenAI-compatible protocol, configure once to access mainstream large models including Gemini, Claude, GPT, Qwen Code, Kimi K2, GLM-4.6
-*   **Flexible Switching Mechanism**: Support dynamic model switching via startup parameters, Path routing, or environment variables to meet different scenario requirements
+*   **Multi-Model Unified Interface**: Through standard OpenAI-compatible protocol, configure once to access mainstream large models including Gemini, Claude, Qwen Code, Kimi K2, MiniMax M2
+*   **Flexible Switching Mechanism**: Path routing, support dynamic model switching via startup parameters or environment variables to meet different scenario requirements
 *   **Zero-Cost Migration**: Fully compatible with OpenAI API specifications, tools like Cherry-Studio, NextChat, Cline can be used without modification
 *   **Multi-Protocol Intelligent Conversion**: Support intelligent conversion between OpenAI, Claude, and Gemini protocols for cross-protocol model invocation
-    *   Call Claude models using OpenAI protocol: Use `claude-custom` or `claude-kiro-oauth` providers
-    *   Call Gemini models using OpenAI protocol: Use `gemini-cli-oauth` provider
-    *   Call Gemini models using Claude protocol: Use `gemini-cli-oauth` provider
-    *   Call OpenAI models using Claude protocol: Use `openai-custom` or `openai-qwen-oauth` providers
 
 ### 🚀 Break Through Limitations, Improve Efficiency
-*   **Bypass Official Restrictions**: Utilize OAuth authorization mechanism to effectively break through rate and quota limits of free APIs like Gemini
-*   **Free Advanced Models**: Use Claude Sonnet 4.5 for free via Kiro API mode, use Qwen3 Coder Plus via Qwen OAuth mode, reducing usage costs
+*   **Bypass Official Restrictions**: Utilize OAuth authorization mechanism to effectively break through rate and quota limits of services like Gemini, Antigravity
+*   **Free Advanced Models**: Use Claude Opus 4.5 for free via Kiro API mode, use Qwen3 Coder Plus via Qwen OAuth mode, reducing usage costs
 *   **Intelligent Account Pool Scheduling**: Support multi-account polling, automatic failover, and configuration degradation, ensuring 99.9% service availability
 
 ### 🛡️ Secure and Controllable, Data Transparent
@@ -65,106 +74,81 @@
 *   **System Prompt Management**: Support override and append modes, achieving perfect combination of unified base instructions and personalized extensions
 
 ### 🔧 Developer-Friendly, Easy to Extend
+*   **Web UI Management Console**: Real-time configuration management, health status monitoring, API testing and log viewing
 *   **Modular Architecture**: Based on strategy and adapter patterns, adding new model providers requires only 3 steps
 *   **Complete Test Coverage**: Integration and unit test coverage 90%+, ensuring code quality
 *   **Containerized Deployment**: Provides Docker support, one-click deployment, cross-platform operation
-*   **MCP Protocol Support**: Perfectly compatible with Model Context Protocol, easily extend functionality
 
 ---
 
 ## 📑 Quick Navigation
 
-- [🐳 Docker Deployment](https://aiproxy.justlikemaki.vip/en/docs/installation/docker-deployment.html)
-- [🎨 Model Protocol and Provider Relationship Diagram](#-model-protocol-and-provider-relationship-diagram)
-- [🔧 Usage Instructions](#-usage-instructions)
-- [🚀 Project Startup Parameters](#-project-startup-parameters)
+- [💡 Core Advantages](#-core-advantages)
+- [🚀 Quick Start](#-quick-start)
+  - [🐳 Docker Deployment](https://hub.docker.com/r/justlikemaki/aiclient-2-api)
+  - [📋 Core Features](#-core-features)
+- [🔐 Authorization Configuration Guide](#-authorization-configuration-guide)
+- [📁 Authorization File Storage Paths](#-authorization-file-storage-paths)
+- [🦙 Ollama Protocol Usage Examples](#-ollama-protocol-usage-examples)
+- [⚙️ Advanced Configuration](#advanced-configuration)
+- [❓ FAQ](#-faq)
 - [📄 Open Source License](#-open-source-license)
 - [🙏 Acknowledgements](#-acknowledgements)
-- [⚠️ Disclaimer](#-disclaimer)
-
----
-
-## 🎨 Model Protocol and Provider Relationship Diagram
-
-This project supports multiple model providers through different protocols. The following is an overview of their relationships:
-
-*   **OpenAI Protocol (P_OPENAI)**: Implemented by `openai-custom`, `gemini-cli-oauth`, `claude-custom`, `claude-kiro-oauth`, `openai-qwen-oauth`, and `openaiResponses-custom` model providers.
-*   **Claude Protocol (P_CLAUDE)**: Implemented by `claude-custom`, `claude-kiro-oauth`, `gemini-cli-oauth`, `openai-custom`, `openai-qwen-oauth`, and `openaiResponses-custom` model providers.
-*   **Gemini Protocol (P_GEMINI)**: Implemented by `gemini-cli-oauth` model provider.
-
-Detailed relationship diagram:
-
-  ```mermaid
-   
-   graph TD
-       subgraph Core_Protocols["Core Protocols"]
-           P_OPENAI[OpenAI Protocol]
-           P_GEMINI[Gemini Protocol]
-           P_CLAUDE[Claude Protocol]
-       end
-   
-       subgraph Supported_Model_Providers["Supported Model Providers"]
-           MP_OPENAI[openai-custom]
-           MP_GEMINI[gemini-cli-oauth]
-           MP_CLAUDE_C[claude-custom]
-           MP_CLAUDE_K[claude-kiro-oauth]
-           MP_QWEN[openai-qwen-oauth]
-           MP_OPENAI_RESP[openaiResponses-custom]
-       end
-   
-       P_OPENAI ---|Support| MP_OPENAI
-       P_OPENAI ---|Support| MP_QWEN
-       P_OPENAI ---|Support| MP_GEMINI
-       P_OPENAI ---|Support| MP_CLAUDE_C
-       P_OPENAI ---|Support| MP_CLAUDE_K
-       P_OPENAI ---|Support| MP_OPENAI_RESP
-   
-       P_GEMINI ---|Support| MP_GEMINI
-   
-       P_CLAUDE ---|Support| MP_CLAUDE_C
-       P_CLAUDE ---|Support| MP_CLAUDE_K
-       P_CLAUDE ---|Support| MP_GEMINI
-       P_CLAUDE ---|Support| MP_OPENAI
-       P_CLAUDE ---|Support| MP_QWEN
-       P_CLAUDE ---|Support| MP_OPENAI_RESP
-   
-       style P_OPENAI fill:#f9f,stroke:#333,stroke-width:2px
-       style P_GEMINI fill:#ccf,stroke:#333,stroke-width:2px
-       style P_CLAUDE fill:#cfc,stroke:#333,stroke-width:2px
-
-   ```
+- [⚠️ Disclaimer](#️-disclaimer)
 
 ---
 
 ## 🔧 Usage Instructions
 
-### 🚀 Quick Start with install-and-run Script
+### 🚀 Quick Start
 
-The easiest way to get started with AIClient-2-API is to use our automated installation and startup scripts. We provide both Linux/macOS and Windows versions:
+The most recommended way to use AIClient-2-API is to start it through an automated script and configure it visually directly in the **Web UI console**.
 
-#### For Linux/macOS Users
+#### 🐳 Docker Quick Start (Recommended)
+
 ```bash
-# Make the script executable and run it
-chmod +x install-and-run.sh
-./install-and-run.sh
+docker run -d -p 3000:3000 -p 8085-8087:8085-8087 -p 19876-19880:19876-19880 --restart=always -v "your_path:/app/configs" --name aiclient2api justlikemaki/aiclient-2-api
 ```
 
-#### For Windows Users
-```cmd
-# Run the batch file
-install-and-run.bat
+**Parameter Description**:
+- `-d`: Run container in background
+- `-p 3000:3000 ...`: Port mapping. 3000 is for Web UI, others are for OAuth callbacks (Gemini: 8085, Antigravity: 8086, Kiro: 19876-19880)
+- `--restart=always`: Container auto-restart policy
+- `-v "your_path:/app/configs"`: Mount configuration directory (replace "your_path" with actual path, e.g., `/home/user/aiclient-configs`)
+- `--name aiclient2api`: Container name
+
+#### 🐳 Docker Compose Deployment
+
+You can also use Docker Compose for deployment. First, navigate to the `docker` directory:
+
+```bash
+cd docker
+mkdir -p configs
+docker compose up -d
 ```
 
-#### What the Script Does
+To build from source instead of using the pre-built image, edit `docker-compose.yml`:
+1. Comment out the `image: justlikemaki/aiclient-2-api:latest` line
+2. Uncomment the `build:` section
+3. Run `docker compose up -d --build`
 
-The `install-and-run` script automatically:
-1. **Checks Node.js Installation**: Verifies Node.js is installed and provides download link if missing
-2. **Dependency Management**: Automatically installs npm dependencies if `node_modules` doesn't exist
-3. **File Validation**: Ensures all required project files are present
-4. **Server Startup**: Launches the API server on `http://localhost:3000`
-5. **Web UI Access**: Provides direct access to the management console
+#### 1. Run the startup script
+*   **Linux/macOS**: `chmod +x install-and-run.sh && ./install-and-run.sh`
+*   **Windows**: Double-click `install-and-run.bat`
 
-#### Script Output Example
+#### 2. Access the console
+After the server starts, open your browser and visit:
+👉 [**http://localhost:3000**](http://localhost:3000)
+
+> **Default Password**: `admin123` (can be changed in the console or by modifying the `pwd` file after login)
+
+#### 3. Visual Configuration (Recommended)
+Go to the **"Configuration"** page, you can:
+*   ✅ Fill in the API Key for each provider or upload OAuth credential files
+*   ✅ Switch default model providers in real-time
+*   ✅ Monitor health status and real-time request logs
+
+#### Script Execution Example
 ```
 ========================================
   AI Client 2 API Quick Install Script
@@ -193,52 +177,63 @@ The `install-and-run` script automatically:
 
 #### Web UI Management Console
 
-![Web UI](src/img/web.png)
+![Web UI](src/img/en.png)
 
-A comprehensive web-based management interface offering:
+A functional Web management interface, including:
 
-**📊 Dashboard**: System overview, interactive routing examples, and client configuration guides
+**📊 Dashboard**: System overview, interactive routing examples, client configuration guide
 
-**⚙️ Configuration**: Real-time parameter modification for all providers (Gemini, OpenAI, Claude, Kiro, Qwen) with advanced settings and file upload support
+**⚙️ Configuration**: Real-time parameter modification, supporting all providers (Gemini, Antigravity, OpenAI, Claude, Kiro, Qwen), including advanced settings and file uploads
 
-**🔗 Provider Pools**: Monitor active connections, provider health statistics, and enable/disable providers
+**🔗 Provider Pools**: Monitor active connections, provider health statistics, enable/disable management
 
-**📁 Config Files**: Centralized OAuth credential management with search, filtering, and file operations
+**📁 Config Files**: Centralized OAuth credential management, supporting search filtering and file operations
 
-**📜 Logs**: Real-time system and request logs with management controls
+**📜 Real-time Logs**: Real-time display of system and request logs, with management controls
 
-**🔐 Login**: Authentication required (default: `admin123`, modify via `pwd` file)
+**🔐 Login Verification**: Default password `admin123`, can be modified via `pwd` file
 
-Access: `http://localhost:3000` → Login → Sidebar navigation → Immediate effect changes
-
-#### MCP Protocol Support
-This project is fully compatible with **Model Context Protocol (MCP)**, enabling seamless integration with MCP-supporting clients for powerful functional extensions.
+Access: `http://localhost:3000` → Login → Sidebar navigation → Take effect immediately
 
 #### Multimodal Input Capabilities
-Supports various input types including images and documents, providing richer interactive experiences and more powerful application scenarios.
+Supports various input types such as images and documents, providing you with a richer interaction experience and more powerful application scenarios.
 
 #### Latest Model Support
-Seamlessly supports the following latest large models, simply configure the corresponding OpenAI or Claude compatible interface in [`config.json`](./config.json):
-*   **Kimi K2** - Moonshot AI's latest flagship model
-*   **GLM-4.5** - Zhipu AI's latest version
-*   **Qwen Code** - Alibaba Tongyi Qianwen code-specific model
-*   **Gemini 3** - Google's latest preview model
-*   **Claude Sonnet 4.5** - Anthropic's latest flagship model
+Seamlessly support the following latest large models, just configure the corresponding endpoint in Web UI or [`configs/config.json`](./configs/config.json):
+*   **Claude 4.5 Opus** - Anthropic's strongest model ever, now supported via Kiro, Antigravity
+*   **Gemini 3 Pro** - Google's next-generation architecture preview, now supported via Gemini, Antigravity
+*   **Qwen3 Coder Plus** - Alibaba Tongyi Qianwen's latest code-specific model, now supported via Qwen Code
+*   **Kimi K2 / MiniMax M2** - Synchronized support for top domestic flagship models, now supported via custom OpenAI, Claude
 
 ---
 
 ### 🔐 Authorization Configuration Guide
 
+<details>
+<summary>Click to expand detailed authorization configuration steps for each provider</summary>
+
+> **💡 Tip**: For the best experience, it is recommended to manage authorization visually through the **Web UI console**.
+
+#### 🌐 Web UI Quick Authorization (Recommended)
+In the Web UI management interface, you can complete authorization configuration rapidly:
+1. **Generate Authorization**: On the **"Provider Pools"** page or **"Configuration"** page, click the **"Generate Authorization"** button in the upper right corner of the corresponding provider (e.g., Gemini, Qwen).
+2. **Scan/Login**: An authorization dialog will pop up, you can click **"Open in Browser"** for login verification. For Qwen, just complete the web login; for Gemini and Antigravity, complete the Google account authorization.
+3. **Auto-Save**: After successful authorization, the system will automatically obtain credentials and save them to the corresponding directory in `configs/`. You can see the newly generated credentials on the **"Config Files"** page.
+4. **Visual Management**: You can upload or delete credentials at any time in the Web UI, or use the **"Quick Associate"** function to bind existing credential files to providers with one click.
+
 #### Gemini CLI OAuth Configuration
 1. **Obtain OAuth Credentials**: Visit [Google Cloud Console](https://console.cloud.google.com/) to create a project and enable Gemini API
-2. **First Authorization**: After using Gemini service, the command line will print Google authorization page, copy the page to browser for authorization, then return to command line
-3. **Credential Storage**: After successful authorization, `oauth_creds.json` file will be automatically generated and saved to `~/.gemini` directory
-4. **Project Configuration**: Need to provide a valid Google Cloud project ID, can be specified via startup parameter `--project-id`
+2. **Project Configuration**: You may need to provide a valid Google Cloud project ID, which can be specified via the startup parameter `--project-id`
+3. **Ensure Project ID**: When configuring in the Web UI, ensure the project ID entered matches the project ID displayed in the Google Cloud Console and Gemini CLI.
+
+#### Antigravity OAuth Configuration
+1. **Personal Account**: Personal accounts require separate authorization, application channels have been closed.
+2. **Pro Member**: Antigravity is temporarily open to Pro members, you need to purchase a Pro membership first.
+3. **Organization Account**: Organization accounts require separate authorization, contact the administrator to obtain authorization.
 
 #### Qwen Code OAuth Configuration
-1. **First Authorization**: After starting the service, the system will automatically open the authorization page in the browser
-2. **Credential Storage**: After successful authorization, `oauth_creds.json` file will be automatically generated and saved to `~/.qwen` directory
-3. **Recommended Parameters**: Use official default parameters for best results
+1. **First Authorization**: After configuring the Qwen service, the system will automatically open the authorization page in the browser
+2. **Recommended Parameters**: Use official default parameters for best results
    ```json
    {
      "temperature": 0,
@@ -247,48 +242,42 @@ Seamlessly supports the following latest large models, simply configure the corr
    ```
 
 #### Kiro API Configuration
-1. **Environment Preparation**: [Download and install Kiro client](https://aibook.ren/archives/kiro-install)
+1. **Environment Preparation**: [Download and install Kiro client](https://kiro.dev/pricing/)
 2. **Complete Authorization**: Log in to your account in the client to generate `kiro-auth-token.json` credential file
 3. **Best Practice**: Recommended to use with **Claude Code** for optimal experience
 4. **Important Notice**: Kiro service usage policy has been updated, please visit the official website for the latest usage restrictions and terms
 
 #### Account Pool Management Configuration
-1. **Create Pool Configuration File**: Create a configuration file referencing [provider_pools.json.example](./provider_pools.json.example)
-2. **Configure Pool Parameter**: Set `PROVIDER_POOLS_FILE_PATH` in config.json to point to the pool configuration file
-3. **Startup Parameter Configuration**: Use `--provider-pools-file <path>` parameter to specify the pool configuration file path
-4. **Health Check**: The system will automatically perform periodic health checks and remove unhealthy providers
+1. **Create Pool Configuration File**: Create a configuration file referencing [provider_pools.json.example](./configs/provider_pools.json.example)
+2. **Configure Pool Parameters**: Set `PROVIDER_POOLS_FILE_PATH` in `configs/config.json` to point to the pool configuration file
+3. **Startup Parameter Configuration**: Use the `--provider-pools-file <path>` parameter to specify the pool configuration file path
+4. **Health Check**: The system will automatically perform periodic health checks and avoid using unhealthy providers
+
+</details>
+
+### 📁 Authorization File Storage Paths
+
+<details>
+<summary>Click to expand default storage locations for authorization credentials</summary>
+
+Default storage locations for authorization credential files of each service:
+
+| Service | Default Path | Description |
+|------|---------|------|
+| **Gemini** | `~/.gemini/oauth_creds.json` | OAuth authentication credentials |
+| **Kiro** | `~/.aws/sso/cache/kiro-auth-token.json` | Kiro authentication token |
+| **Qwen** | `~/.qwen/oauth_creds.json` | Qwen OAuth credentials |
+| **Antigravity** | `~/.antigravity/oauth_creds.json` | Antigravity OAuth credentials (supports Claude 4.5 Opus) |
+
+> **Note**: `~` represents the user home directory (Windows: `C:\Users\username`, Linux/macOS: `/home/username` or `/Users/username`)
+
+> **Custom Path**: Can specify custom storage location via relevant parameters in configuration file or environment variables
+
+</details>
 
 ---
 
-### 🔄 Model Provider Switching
-
-This project provides two flexible model switching methods to meet different usage scenario requirements.
-
-Achieve instant switching by specifying provider identifier in API request path:
-
-
-| Route Path | Description | Use Case |
-|---------|------|---------|
-| `/claude-custom` | Use Claude API from config file | Official Claude API calls |
-| `/claude-kiro-oauth` | Access Claude via Kiro OAuth | Free use of Claude Sonnet 4.5 |
-| `/openai-custom` | Use OpenAI provider to handle requests | Standard OpenAI API calls |
-| `/gemini-cli-oauth` | Access via Gemini CLI OAuth | Break through Gemini free limits |
-| `/openai-qwen-oauth` | Access via Qwen OAuth | Use Qwen Code Plus |
-| `/openaiResponses-custom` | OpenAI Responses API | Structured dialogue scenarios |
-| `/ollama` | Ollama API protocol | Unified access to all supported models |
- 
-**Usage Examples**:
-```bash
-# Configure in programming agents like Cline, Kilo
-API_ENDPOINT=http://localhost:3000/claude-kiro-oauth
- 
-# Direct API call
-curl http://localhost:3000/gemini-cli-oauth/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gemini-2.0-flash-exp","messages":[...]}'
-```
-
-### Ollama Protocol Usage Examples
+### 🦙 Ollama Protocol Usage Examples
 
 This project supports the Ollama protocol, allowing access to all supported models through a unified interface. The Ollama endpoint provides standard interfaces such as `/api/tags`, `/api/chat`, `/api/generate`, etc.
 
@@ -296,13 +285,15 @@ This project supports the Ollama protocol, allowing access to all supported mode
 
 1. **List all available models**:
 ```bash
-curl http://localhost:3000/ollama/api/tags
+curl http://localhost:3000/ollama/api/tags \
+  -H "Authorization: Bearer your-api-key"
 ```
 
 2. **Chat interface**:
 ```bash
 curl http://localhost:3000/ollama/api/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
   -d '{
     "model": "[Claude] claude-sonnet-4.5",
     "messages": [
@@ -319,191 +310,284 @@ curl http://localhost:3000/ollama/api/chat \
 - `[Qwen CLI]` - Access via Qwen OAuth
 
 ---
- 
-### 📁 Authorization File Storage Paths
 
-Default storage locations for authorization credential files of each service:
+### Advanced Configuration
 
-| Service | Default Path | Description |
-|------|---------|------|
-| **Gemini** | `~/.gemini/oauth_creds.json` | OAuth authentication credentials |
-| **Kiro** | `~/.aws/sso/cache/kiro-auth-token.json` | Kiro authentication token |
-| **Qwen** | `~/.qwen/oauth_creds.json` | Qwen OAuth credentials |
-| **Antigravity** | `~/.antigravity/oauth_creds.json` | Antigravity OAuth credentials |
+<details>
+<summary>Click to expand proxy configuration, model filtering, and Fallback advanced settings</summary>
 
-> **Note**: `~` represents the user home directory (Windows: `C:\Users\username`, Linux/macOS: `/home/username` or `/Users/username`)
->
-> **Custom Path**: Can specify custom storage location via relevant parameters in configuration file or environment variables
+#### 1. Proxy Configuration
+
+This project supports flexible proxy configuration, allowing you to configure a unified proxy for different providers or use provider-specific proxied endpoints.
+
+**Configuration Methods**:
+
+1. **Web UI Configuration** (Recommended): Convenient configuration management
+
+  In the "Configuration" page of the Web UI, you can visually configure all proxy options:
+  - **Unified Proxy**: Fill in the proxy address in the "Proxy Settings" area and check the providers that need to use the proxy
+  - **Provider Endpoints**: In each provider's configuration area, directly modify the Base URL to a proxied endpoint
+  - **Click "Save Configuration"**: Takes effect immediately without restarting the service
+
+2. **Unified Proxy Configuration**: Configure a global proxy and specify which providers use it
+
+   - **Web UI Configuration**: Fill in the proxy address in the "Proxy Settings" area of the "Configuration" page and check the providers that need to use the proxy
+   - **Configuration File**: Configure in `configs/config.json`
+   ```json
+   {
+     "PROXY_URL": "http://127.0.0.1:7890",
+     "PROXY_ENABLED_PROVIDERS": [
+       "gemini-cli-oauth",
+       "gemini-antigravity",
+       "claude-kiro-oauth"
+     ]
+   }
+   ```
+
+3. **Provider-Specific Proxied Endpoints**: Some providers (like OpenAI, Claude) support configuring proxied API endpoints
+
+   - **Web UI Configuration**: In each provider's configuration area on the "Configuration" page, modify the corresponding Base URL
+   - **Configuration File**: Configure in `configs/config.json`
+   ```json
+   {
+     "OPENAI_BASE_URL": "https://your-proxy-endpoint.com/v1",
+     "CLAUDE_BASE_URL": "https://your-proxy-endpoint.com"
+   }
+   ```
+
+**Supported Proxy Types**:
+- **HTTP Proxy**: `http://127.0.0.1:7890`
+- **HTTPS Proxy**: `https://127.0.0.1:7890`
+- **SOCKS5 Proxy**: `socks5://127.0.0.1:1080`
+
+**Use Cases**:
+- **Network-Restricted Environments**: Use in network environments where Google, OpenAI, and other services cannot be accessed directly
+- **Hybrid Configuration**: Some providers use unified proxy, others use their own proxied endpoints
+- **Flexible Switching**: Enable/disable proxy for specific providers at any time in the Web UI
+
+**Notes**:
+- Proxy configuration priority: Unified proxy configuration > Provider-specific endpoints > Direct connection
+- Ensure the proxy service is stable and available, otherwise it may affect service quality
+- SOCKS5 proxy usually performs better than HTTP proxy
+
+#### 2. Model Filtering Configuration
+
+Support excluding unsupported models through `notSupportedModels` configuration, the system will automatically skip these providers.
+
+**Configuration**: Add `notSupportedModels` field for providers in `configs/provider_pools.json`:
+
+```json
+{
+  "gemini-cli-oauth": [
+    {
+      "uuid": "provider-1",
+      "notSupportedModels": ["gemini-3.0-pro", "gemini-3.5-flash"],
+      "checkHealth": true
+    }
+  ]
+}
+```
+
+**How It Works**:
+- When requesting a specific model, the system automatically filters out providers that have configured the model as unsupported
+- Only providers that support the model will be selected to handle the request
+
+**Use Cases**:
+- Some accounts cannot access specific models due to quota or permission restrictions
+- Need to assign different model access permissions to different accounts
+
+#### 3. Cross-Type Fallback Configuration
+
+When all accounts under a Provider Type (e.g., `gemini-cli-oauth`) are exhausted due to 429 quota limits or marked as unhealthy, the system can automatically fallback to another compatible Provider Type (e.g., `gemini-antigravity`) instead of returning an error directly.
+
+**Configuration**: Add `providerFallbackChain` configuration in `configs/config.json`:
+
+```json
+{
+  "providerFallbackChain": {
+    "gemini-cli-oauth": ["gemini-antigravity"],
+    "gemini-antigravity": ["gemini-cli-oauth"],
+    "claude-kiro-oauth": ["claude-custom"],
+    "claude-custom": ["claude-kiro-oauth"]
+  }
+}
+```
+
+**How It Works**:
+1. Try to select a healthy account from the primary Provider Type pool
+2. If all accounts in that type are unhealthy or return 429:
+   - Look up the configured fallback types
+   - Check if the fallback type supports the requested model (protocol compatibility check)
+   - Select a healthy account from the fallback type's pool
+3. Supports multi-level degradation chains: `gemini-cli-oauth → gemini-antigravity → openai-custom`
+4. Only returns an error if all fallback types are also unavailable
+
+**Use Cases**:
+- In batch task scenarios, the free RPD quota of a single Provider Type can be easily exhausted in a short time
+- Through cross-type Fallback, you can fully utilize the independent quotas of multiple Providers, improving overall availability and throughput
+
+**Notes**:
+- Fallback only occurs between protocol-compatible types (e.g., between `gemini-*`, between `claude-*`)
+- The system automatically checks if the target Provider Type supports the requested model
+
+</details>
 
 ---
 
-## 🚀 Project Startup Parameters
+## ❓ FAQ
 
-This project supports rich command-line parameter configuration, allowing flexible adjustment of service behavior as needed. The following is a detailed explanation of all startup parameters, displayed in functional groups:
+<details>
+<summary>Click to expand FAQ and solutions (port occupation, Docker startup, 429 errors, etc.)</summary>
 
-### 🔧 Server Configuration Parameters
+### 1. OAuth Authorization Failed
 
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--host` | string | localhost | Server listening address |
-| `--port` | number | 3000 | Server listening port |
-| `--api-key` | string | 123456 | API key for authentication |
+**Problem Description**: After clicking "Generate Authorization", the browser opens the authorization page but authorization fails or cannot be completed.
 
-### 🤖 Model Provider Configuration Parameters
+**Solutions**:
+- **Check Network Connection**: Ensure you can access Google, Alibaba Cloud, and other services normally
+- **Check Port Occupation**: OAuth callbacks require specific ports (Gemini: 8085, Antigravity: 8086, Kiro: 19876-19880), ensure these ports are not occupied
+- **Clear Browser Cache**: Try using incognito mode or clearing browser cache and retry
+- **Check Firewall Settings**: Ensure the firewall allows access to local callback ports
+- **Docker Users**: Ensure all OAuth callback ports are correctly mapped
 
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--model-provider` | string | gemini-cli-oauth | AI model provider, optional values: openai-custom, claude-custom, gemini-cli-oauth, claude-kiro-oauth, openai-qwen-oauth, openaiResponses-custom, gemini-antigravity |
+### 2. Port Already in Use
 
-### 🧠 OpenAI Compatible Provider Parameters
+**Problem Description**: When starting the service, it shows the port is already in use (e.g., `EADDRINUSE`).
 
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--openai-api-key` | string | null | OpenAI API key (required when `model-provider` is `openai-custom`) |
-| `--openai-base-url` | string | null | OpenAI API base URL (required when `model-provider` is `openai-custom`) |
-
-### 🖥️ Claude Compatible Provider Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--claude-api-key` | string | null | Claude API key (required when `model-provider` is `claude-custom`) |
-| `--claude-base-url` | string | null | Claude API base URL (required when `model-provider` is `claude-custom`) |
-
-### 🔐 Gemini OAuth Authentication Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--gemini-oauth-creds-base64` | string | null | Base64 string of Gemini OAuth credentials (optional when `model-provider` is `gemini-cli-oauth`, choose one with `--gemini-oauth-creds-file`) |
-| `--gemini-oauth-creds-file` | string | null | Gemini OAuth credentials JSON file path (optional when `model-provider` is `gemini-cli-oauth`, choose one with `--gemini-oauth-creds-base64`) |
-| `--project-id` | string | null | Google Cloud project ID (required when `model-provider` is `gemini-cli-oauth`) |
-
-### 🎮 Kiro OAuth Authentication Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--kiro-oauth-creds-base64` | string | null | Base64 string of Kiro OAuth credentials (optional when `model-provider` is `claude-kiro-oauth`, choose one with `--kiro-oauth-creds-file`) |
-| `--kiro-oauth-creds-file` | string | null | Kiro OAuth credentials JSON file path (optional when `model-provider` is `claude-kiro-oauth`, choose one with `--kiro-oauth-creds-base64`) |
-
-### 🐼 Qwen OAuth Authentication Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--qwen-oauth-creds-file` | string | null | Qwen OAuth credentials JSON file path (required when `model-provider` is `openai-qwen-oauth`) |
-
-### 🌌 Antigravity OAuth Authentication Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--antigravity-oauth-creds-file` | string | null | Antigravity OAuth credentials JSON file path (optional when `model-provider` is `gemini-antigravity`) |
-
-### 🔄 OpenAI Responses API Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--model-provider` | string | openaiResponses-custom | Model provider, set to `openaiResponses-custom` when using OpenAI Responses API |
-| `--openai-api-key` | string | null | OpenAI API key (required when `model-provider` is `openaiResponses-custom`) |
-| `--openai-base-url` | string | null | OpenAI API base URL (required when `model-provider` is `openaiResponses-custom`) |
-
-### 📝 System Prompt Configuration Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--system-prompt-file` | string | input_system_prompt.txt | System prompt file path |
-| `--system-prompt-mode` | string | overwrite | System prompt mode, optional values: overwrite (override), append (append) |
-
-### 📊 Log Configuration Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--log-prompts` | string | none | Prompt log mode, optional values: console (console), file (file), none (none) |
-| `--prompt-log-base-name` | string | prompt_log | Prompt log file base name |
-
-### 🔄 Retry Mechanism Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--request-max-retries` | number | 3 | Maximum number of automatic retries when API requests fail |
-| `--request-base-delay` | number | 1000 | Base delay time (milliseconds) between automatic retries, delay increases after each retry |
-
-### ⏰ Scheduled Task Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--cron-near-minutes` | number | 15 | Interval time (minutes) for OAuth token refresh task schedule |
-| `--cron-refresh-token` | boolean | true | Whether to enable automatic OAuth token refresh task |
-
-### 🎯 Account Pool Configuration Parameters
-
-| Parameter | Type | Default Value | Description |
-|------|------|--------|------|
-| `--provider-pools-file` | string | null | Provider account pool configuration file path |
-
-### Usage Examples
-
+**Solutions**:
 ```bash
-# Basic usage
-node src/api-server.js
+# Windows - Find the process occupying the port
+netstat -ano | findstr :3000
+# Then use Task Manager to end the corresponding PID process
 
-# Specify port and API key
-node src/api-server.js --port 8080 --api-key my-secret-key
-
-# Use OpenAI provider
-node src/api-server.js --model-provider openai-custom --openai-api-key sk-xxx --openai-base-url https://api.openai.com/v1
-
-# Use Claude provider
-node src/api-server.js --model-provider claude-custom --claude-api-key sk-ant-xxx --claude-base-url https://api.anthropic.com
-
-# Use OpenAI Responses API provider
-node src/api-server.js --model-provider openaiResponses-custom --openai-api-key sk-xxx --openai-base-url https://api.openai.com/v1
-
-# Use Gemini provider (Base64 credentials)
-node src/api-server.js --model-provider gemini-cli-oauth --gemini-oauth-creds-base64 eyJ0eXBlIjoi... --project-id your-project-id
-
-# Use Gemini provider (credentials file)
-node src/api-server.js --model-provider gemini-cli-oauth --gemini-oauth-creds-file /path/to/credentials.json --project-id your-project-id
-
-# Configure system prompt
-node src/api-server.js --system-prompt-file custom-prompt.txt --system-prompt-mode append
-
-# Configure logging
-node src/api-server.js --log-prompts console
-node src/api-server.js --log-prompts file --prompt-log-base-name my-logs
-
-# Configure Account Pool
-node src/api-server.js --provider-pools-file ./provider_pools.json
-
-# Complete example
-node src/api-server.js \
-  --host 0.0.0.0 \
-  --port 3000 \
-  --api-key my-secret-key \
-  --model-provider gemini-cli-oauth \
-  --project-id my-gcp-project \
-  --gemini-oauth-creds-file ./credentials.json \
-  --system-prompt-file ./custom-system-prompt.txt \
-  --system-prompt-mode overwrite \
-  --log-prompts file \
-  --prompt-log-base-name api-logs \
-  --provider-pools-file ./provider_pools.json
+# Linux/macOS - Find and end the process occupying the port
+lsof -i :3000
+kill -9 <PID>
 ```
+
+Or modify the port configuration in `configs/config.json` to use a different port.
+
+### 3. Docker Container Won't Start
+
+**Problem Description**: Docker container fails to start or exits immediately.
+
+**Solutions**:
+- **Check Logs**: `docker logs aiclient2api` to view error messages
+- **Check Mount Path**: Ensure the local path in the `-v` parameter exists and has read/write permissions
+- **Check Port Conflicts**: Ensure all mapped ports are not occupied on the host
+- **Re-pull Image**: `docker pull justlikemaki/aiclient-2-api:latest`
+
+### 4. Credential File Not Recognized
+
+**Problem Description**: After uploading or configuring credential files, the system shows it cannot be recognized or format error.
+
+**Solutions**:
+- **Check File Format**: Ensure the credential file is valid JSON format
+- **Check File Path**: Ensure the file path is correct, Docker users need to ensure the file is in the mounted directory
+- **Check File Permissions**: Ensure the service has permission to read the credential file
+- **Regenerate Credentials**: If credentials have expired, try re-authorizing via OAuth
+
+### 5. Request Returns 429 Error
+
+**Problem Description**: API requests frequently return 429 Too Many Requests error.
+
+**Solutions**:
+- **Configure Account Pool**: Add multiple accounts to `provider_pools.json`, enable polling mechanism
+- **Configure Fallback**: Configure `providerFallbackChain` in `config.json` for cross-type degradation
+- **Reduce Request Frequency**: Appropriately increase request intervals to avoid triggering rate limits
+- **Wait for Quota Reset**: Free quotas usually reset daily or per minute
+
+### 6. Model Unavailable or Returns Error
+
+**Problem Description**: When requesting a specific model, it returns an error or shows the model is unavailable.
+
+**Solutions**:
+- **Check Model Name**: Ensure you're using the correct model name (case-sensitive)
+- **Check Provider Support**: Confirm the currently configured provider supports that model
+- **Check Account Permissions**: Some advanced models may require specific account permissions
+- **Configure Model Filtering**: Use `notSupportedModels` to exclude unsupported models
+
+### 7. Web UI Cannot Be Accessed
+
+**Problem Description**: Browser cannot open `http://localhost:3000`.
+
+**Solutions**:
+- **Check Service Status**: Confirm the service has started successfully, check terminal output
+- **Check Port Mapping**: Docker users ensure `-p 3000:3000` parameter is correct
+- **Try Other Address**: Try accessing `http://127.0.0.1:3000`
+- **Check Firewall**: Ensure the firewall allows access to port 3000
+
+### 8. Streaming Response Interrupted
+
+**Problem Description**: When using streaming output, the response is interrupted midway or incomplete.
+
+**Solutions**:
+- **Check Network Stability**: Ensure network connection is stable
+- **Increase Timeout**: Increase request timeout in client configuration
+- **Check Proxy Settings**: If using a proxy, ensure the proxy supports long connections
+- **Check Service Logs**: Check for error messages
+
+### 9. Configuration Changes Not Taking Effect
+
+**Problem Description**: After modifying configuration in Web UI, service behavior doesn't change.
+
+**Solutions**:
+- **Refresh Page**: Refresh the Web UI page after modification
+- **Check Save Status**: Confirm the configuration was saved successfully (check prompt messages)
+- **Restart Service**: Some configurations may require service restart to take effect
+- **Check Configuration File**: Directly check `configs/config.json` to confirm changes were written
+
+### 10. API Returns 404
+
+**Problem Description**: When calling API endpoints, it returns 404 Not Found error.
+
+**Solutions**:
+- **Check Endpoint Path**: Ensure you're using the correct endpoint path, such as `/v1/chat/completions`, `/ollama/api/chat`, etc.
+- **Check Client Auto-completion**: Some clients (like Cherry-Studio, NextChat) automatically append paths (like `/v1/chat/completions`) after the Base URL, causing path duplication. Check the actual request URL in the console and remove redundant path parts
+- **Check Service Status**: Confirm the service has started normally, visit `http://localhost:3000` to view Web UI
+- **Check Port Configuration**: Ensure requests are sent to the correct port (default 3000)
+- **View Available Routes**: Check "Interactive Routing Examples" on the Web UI dashboard page to see all available endpoints
+
+### 11. Unauthorized: API key is invalid or missing
+
+**Problem Description**: When calling API endpoints, it returns `Unauthorized: API key is invalid or missing.` error.
+
+**Solutions**:
+- **Check API Key Configuration**: Ensure API Key is correctly configured in `configs/config.json` or Web UI
+- **Check Request Header Format**: Ensure the request contains the correct Authorization header format, such as `Authorization: Bearer your-api-key`
+- **Check Service Logs**: View detailed error messages on the "Real-time Logs" page in Web UI to locate the specific cause
+
+</details>
 
 ---
 
 ## 📄 Open Source License
 
-This project operates under the [**GNU General Public License v3 (GPLv3)**](https://www.gnu.org/licenses/gpl-3.0). For complete details, please refer to the `LICENSE` file located in the root directory.
+This project follows the [**GNU General Public License v3 (GPLv3)**](https://www.gnu.org/licenses/gpl-3.0) license. For details, please check the `LICENSE` file in the root directory.
 
 ## 🙏 Acknowledgements
 
-The development of this project was significantly inspired by the official Google Gemini CLI and incorporated some code implementations from Cline 3.18.0's `gemini-cli.ts`. We extend our sincere gratitude to the official Google team and the Cline development team for their exceptional work!
+The development of this project was greatly inspired by the official Google Gemini CLI and referenced part of the code implementation of `gemini-cli.ts` in Cline 3.18.0. Sincere thanks to the Google official team and the Cline development team for their excellent work!
+
 ### Contributor List
 
 Thanks to all the developers who contributed to the AIClient-2-API project:
 
 [![Contributors](https://contrib.rocks/image?repo=justlovemaki/AIClient-2-API)](https://github.com/justlovemaki/AIClient-2-API/graphs/contributors)
 
+### Sponsor List
 
-## 🌟 Star History
+We are grateful for the support from our sponsors:
+
+- [**Cigarliu**](https://github.com/Cigarliu "9.9")
+- [**xianengqi**](https://github.com/xianengqi "9.9")
+- [**3831143avl**](https://github.com/3831143avl "10")
+- [**醉春风**](https://github.com/handsometong "28.8")
+- [**crazy**](https://github.com/404 "88")
+- [**清宵落了灯花**](https://github.com/Lanternmorning "16")
+
+### 🌟 Star History
+
 
 [![Star History Chart](https://api.star-history.com/svg?repos=justlovemaki/AIClient-2-API&type=Timeline)](https://www.star-history.com/#justlovemaki/AIClient-2-API&Timeline)
 

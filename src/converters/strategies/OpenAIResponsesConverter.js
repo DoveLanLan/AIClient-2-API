@@ -4,10 +4,13 @@
  */
 
 import { BaseConverter } from '../BaseConverter.js';
-import { MODEL_PROTOCOL_PREFIX } from '../../common.js';
+import { MODEL_PROTOCOL_PREFIX } from '../../utils/common.js';
 import {
     extractAndProcessSystemMessages as extractSystemMessages,
-    extractTextFromMessageContent as extractText
+    extractTextFromMessageContent as extractText,
+    CLAUDE_DEFAULT_MAX_TOKENS,
+    GEMINI_DEFAULT_INPUT_TOKEN_LIMIT,
+    GEMINI_DEFAULT_OUTPUT_TOKEN_LIMIT
 } from '../utils.js';
 
 /**
@@ -227,7 +230,7 @@ export class OpenAIResponsesConverter extends BaseConverter {
         const claudeRequest = {
             model: responsesRequest.model,
             messages: [],
-            max_tokens: responsesRequest.max_tokens || 4096,
+            max_tokens: responsesRequest.max_tokens || CLAUDE_DEFAULT_MAX_TOKENS,
             stream: responsesRequest.stream || false
         };
 
@@ -257,6 +260,10 @@ export class OpenAIResponsesConverter extends BaseConverter {
 
         // 如果有标准的 messages 字段，也支持
         if (responsesRequest.messages && Array.isArray(responsesRequest.messages)) {
+            const { systemMessages, otherMessages } = extractSystemMessages(
+                responsesRequest.messages
+            );
+            
             if (!claudeRequest.system && systemMessages.length > 0) {
                 const systemTexts = systemMessages.map(msg => extractText(msg.content));
                 claudeRequest.system = systemTexts.join('\n');
@@ -375,11 +382,18 @@ export class OpenAIResponsesConverter extends BaseConverter {
         // 处理 input 数组中的消息
         if (responsesRequest.input && Array.isArray(responsesRequest.input)) {
             responsesRequest.input.forEach(item => {
-                if (item.type === 'message') {
-                    const content = item.content
-                        .filter(c => c.type === 'input_text')
-                        .map(c => c.text)
-                        .join('\n');
+                // 如果 item 没有 type 属性，默认为 message
+                // 或者 item.type 明确为 message
+                if (!item.type || item.type === 'message') {
+                    let content = '';
+                    if (Array.isArray(item.content)) {
+                        content = item.content
+                            .filter(c => c.type === 'input_text')
+                            .map(c => c.text)
+                            .join('\n');
+                    } else if (typeof item.content === 'string') {
+                        content = item.content;
+                    }
                     
                     if (content) {
                         geminiRequest.contents.push({
@@ -557,8 +571,8 @@ export class OpenAIResponsesConverter extends BaseConverter {
                 version: m.version || "1.0.0",
                 displayName: m.displayName || m.id || m.name,
                 description: m.description || `A generative model for text and chat generation. ID: ${m.id || m.name}`,
-                inputTokenLimit: m.inputTokenLimit || 32768,
-                outputTokenLimit: m.outputTokenLimit || 8192,
+                inputTokenLimit: m.inputTokenLimit || GEMINI_DEFAULT_INPUT_TOKEN_LIMIT,
+                outputTokenLimit: m.outputTokenLimit || GEMINI_DEFAULT_OUTPUT_TOKEN_LIMIT,
                 supportedGenerationMethods: m.supportedGenerationMethods || ["generateContent", "streamGenerateContent"]
             }))
         };

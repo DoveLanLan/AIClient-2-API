@@ -9,10 +9,125 @@ import { v4 as uuidv4 } from 'uuid';
 // 常量定义
 // =============================================================================
 
+// 通用默认值
 export const DEFAULT_MAX_TOKENS = 8192;
-export const DEFAULT_GEMINI_MAX_TOKENS = 65535;
 export const DEFAULT_TEMPERATURE = 1;
 export const DEFAULT_TOP_P = 0.95;
+
+// =============================================================================
+// OpenAI 相关常量
+// =============================================================================
+export const OPENAI_DEFAULT_MAX_TOKENS = 128000;
+export const OPENAI_DEFAULT_TEMPERATURE = 1;
+export const OPENAI_DEFAULT_TOP_P = 0.95;
+export const OPENAI_DEFAULT_INPUT_TOKEN_LIMIT = 32768;
+export const OPENAI_DEFAULT_OUTPUT_TOKEN_LIMIT = 128000;
+
+// =============================================================================
+// Claude 相关常量
+// =============================================================================
+export const CLAUDE_DEFAULT_MAX_TOKENS = 200000;
+export const CLAUDE_DEFAULT_TEMPERATURE = 1;
+export const CLAUDE_DEFAULT_TOP_P = 0.95;
+
+// =============================================================================
+// Gemini 相关常量
+// =============================================================================
+export const GEMINI_DEFAULT_MAX_TOKENS = 65534;
+export const GEMINI_DEFAULT_TEMPERATURE = 1;
+export const GEMINI_DEFAULT_TOP_P = 0.95;
+export const GEMINI_DEFAULT_INPUT_TOKEN_LIMIT = 32768;
+export const GEMINI_DEFAULT_OUTPUT_TOKEN_LIMIT = 65534;
+
+// =============================================================================
+// OpenAI Responses 相关常量
+// =============================================================================
+export const OPENAI_RESPONSES_DEFAULT_MAX_TOKENS = 128000;
+export const OPENAI_RESPONSES_DEFAULT_TEMPERATURE = 1;
+export const OPENAI_RESPONSES_DEFAULT_TOP_P = 0.95;
+export const OPENAI_RESPONSES_DEFAULT_INPUT_TOKEN_LIMIT = 32768;
+export const OPENAI_RESPONSES_DEFAULT_OUTPUT_TOKEN_LIMIT = 128000;
+
+// =============================================================================
+// Ollama 相关常量
+// =============================================================================
+export const OLLAMA_DEFAULT_CONTEXT_LENGTH = 65534;
+export const OLLAMA_DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+
+// Claude 模型上下文长度
+export const OLLAMA_CLAUDE_DEFAULT_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_SONNET_45_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_SONNET_45_MAX_OUTPUT_TOKENS = 200000;
+export const OLLAMA_CLAUDE_HAIKU_45_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_HAIKU_45_MAX_OUTPUT_TOKENS = 200000;
+export const OLLAMA_CLAUDE_OPUS_41_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_OPUS_41_MAX_OUTPUT_TOKENS = 32000;
+export const OLLAMA_CLAUDE_SONNET_40_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_SONNET_40_MAX_OUTPUT_TOKENS = 200000;
+export const OLLAMA_CLAUDE_SONNET_37_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_SONNET_37_MAX_OUTPUT_TOKENS = 200000;
+export const OLLAMA_CLAUDE_OPUS_40_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_OPUS_40_MAX_OUTPUT_TOKENS = 32000;
+export const OLLAMA_CLAUDE_HAIKU_35_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_HAIKU_35_MAX_OUTPUT_TOKENS = 200000;
+export const OLLAMA_CLAUDE_HAIKU_30_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_HAIKU_30_MAX_OUTPUT_TOKENS = 8192;
+export const OLLAMA_CLAUDE_SONNET_35_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_SONNET_35_MAX_OUTPUT_TOKENS = 200000;
+export const OLLAMA_CLAUDE_OPUS_30_CONTEXT_LENGTH = 200000;
+export const OLLAMA_CLAUDE_OPUS_30_MAX_OUTPUT_TOKENS = 8192;
+
+// Gemini 模型上下文长度
+export const OLLAMA_GEMINI_25_PRO_CONTEXT_LENGTH = 1048576;
+export const OLLAMA_GEMINI_25_PRO_MAX_OUTPUT_TOKENS = 65534;
+export const OLLAMA_GEMINI_25_FLASH_CONTEXT_LENGTH = 1048576;
+export const OLLAMA_GEMINI_25_FLASH_MAX_OUTPUT_TOKENS = 65534;
+export const OLLAMA_GEMINI_25_IMAGE_CONTEXT_LENGTH = 65534;
+export const OLLAMA_GEMINI_25_IMAGE_MAX_OUTPUT_TOKENS = 32768;
+export const OLLAMA_GEMINI_25_LIVE_CONTEXT_LENGTH = 131072;
+export const OLLAMA_GEMINI_25_LIVE_MAX_OUTPUT_TOKENS = 65534;
+export const OLLAMA_GEMINI_25_TTS_CONTEXT_LENGTH = 65534;
+export const OLLAMA_GEMINI_25_TTS_MAX_OUTPUT_TOKENS = 16384;
+export const OLLAMA_GEMINI_20_FLASH_CONTEXT_LENGTH = 1048576;
+export const OLLAMA_GEMINI_20_FLASH_MAX_OUTPUT_TOKENS = 65534;
+export const OLLAMA_GEMINI_20_IMAGE_CONTEXT_LENGTH = 32768;
+export const OLLAMA_GEMINI_20_IMAGE_MAX_OUTPUT_TOKENS = 65534;
+export const OLLAMA_GEMINI_15_PRO_CONTEXT_LENGTH = 2097152;
+export const OLLAMA_GEMINI_15_PRO_MAX_OUTPUT_TOKENS = 65534;
+export const OLLAMA_GEMINI_15_FLASH_CONTEXT_LENGTH = 1048576;
+export const OLLAMA_GEMINI_15_FLASH_MAX_OUTPUT_TOKENS = 65534;
+export const OLLAMA_GEMINI_DEFAULT_CONTEXT_LENGTH = 1048576;
+export const OLLAMA_GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 65534;
+
+// GPT 模型上下文长度
+export const OLLAMA_GPT4_TURBO_CONTEXT_LENGTH = 128000;
+export const OLLAMA_GPT4_TURBO_MAX_OUTPUT_TOKENS = 8192;
+export const OLLAMA_GPT4_32K_CONTEXT_LENGTH = 32768;
+export const OLLAMA_GPT4_32K_MAX_OUTPUT_TOKENS = 8192;
+export const OLLAMA_GPT4_BASE_CONTEXT_LENGTH = 200000;
+export const OLLAMA_GPT4_BASE_MAX_OUTPUT_TOKENS = 8192;
+export const OLLAMA_GPT35_16K_CONTEXT_LENGTH = 16385;
+export const OLLAMA_GPT35_16K_MAX_OUTPUT_TOKENS = 8192;
+export const OLLAMA_GPT35_BASE_CONTEXT_LENGTH = 8192;
+export const OLLAMA_GPT35_BASE_MAX_OUTPUT_TOKENS = 8192;
+
+// Qwen 模型上下文长度
+export const OLLAMA_QWEN_CODER_PLUS_CONTEXT_LENGTH = 128000;
+export const OLLAMA_QWEN_CODER_PLUS_MAX_OUTPUT_TOKENS = 65534;
+export const OLLAMA_QWEN_VL_PLUS_CONTEXT_LENGTH = 262144;
+export const OLLAMA_QWEN_VL_PLUS_MAX_OUTPUT_TOKENS = 32768;
+export const OLLAMA_QWEN_CODER_FLASH_CONTEXT_LENGTH = 128000;
+export const OLLAMA_QWEN_CODER_FLASH_MAX_OUTPUT_TOKENS = 65534;
+export const OLLAMA_QWEN_DEFAULT_CONTEXT_LENGTH = 32768;
+export const OLLAMA_QWEN_DEFAULT_MAX_OUTPUT_TOKENS = 200000;
+
+export const OLLAMA_DEFAULT_FILE_TYPE = 2;
+export const OLLAMA_DEFAULT_QUANTIZATION_VERSION = 2;
+export const OLLAMA_DEFAULT_ROPE_FREQ_BASE = 10000.0;
+export const OLLAMA_DEFAULT_TEMPERATURE = 0.7;
+export const OLLAMA_DEFAULT_TOP_P = 0.9;
+export const OLLAMA_DEFAULT_QUANTIZATION_LEVEL = 'Q4_0';
+export const OLLAMA_SHOW_QUANTIZATION_LEVEL = 'Q4_K_M';
 
 // =============================================================================
 // 通用辅助函数
@@ -114,6 +229,12 @@ export function extractAndProcessSystemMessages(messages) {
 
 /**
  * 清理JSON Schema属性（移除Gemini不支持的属性）
+ * Google Gemini API 只支持有限的 JSON Schema 属性，不支持以下属性：
+ * - exclusiveMinimum, exclusiveMaximum, minimum, maximum
+ * - minLength, maxLength, minItems, maxItems
+ * - pattern, format, default, const
+ * - additionalProperties, $schema, $ref, $id
+ * - allOf, anyOf, oneOf, not
  * @param {Object} schema - JSON Schema
  * @returns {Object} 清理后的JSON Schema
  */
@@ -122,23 +243,39 @@ export function cleanJsonSchemaProperties(schema) {
         return schema;
     }
 
+    // 如果是数组，递归处理每个元素
+    if (Array.isArray(schema)) {
+        return schema.map(item => cleanJsonSchemaProperties(item));
+    }
+
+    // Gemini 支持的 JSON Schema 属性白名单
+    const allowedKeys = [
+        "type",
+        "description",
+        "properties",
+        "required",
+        "enum",
+        "items",
+        "nullable"
+    ];
+
     const sanitized = {};
     for (const [key, value] of Object.entries(schema)) {
-        if (["type", "description", "properties", "required", "enum", "items"].includes(key)) {
-            sanitized[key] = value;
+        if (allowedKeys.includes(key)) {
+            // 对于需要递归处理的属性
+            if (key === 'properties' && typeof value === 'object' && value !== null) {
+                const cleanProperties = {};
+                for (const [propName, propSchema] of Object.entries(value)) {
+                    cleanProperties[propName] = cleanJsonSchemaProperties(propSchema);
+                }
+                sanitized[key] = cleanProperties;
+            } else if (key === 'items') {
+                sanitized[key] = cleanJsonSchemaProperties(value);
+            } else {
+                sanitized[key] = value;
+            }
         }
-    }
-
-    if (sanitized.properties && typeof sanitized.properties === 'object') {
-        const cleanProperties = {};
-        for (const [propName, propSchema] of Object.entries(sanitized.properties)) {
-            cleanProperties[propName] = cleanJsonSchemaProperties(propSchema);
-        }
-        sanitized.properties = cleanProperties;
-    }
-
-    if (sanitized.items) {
-        sanitized.items = cleanJsonSchemaProperties(sanitized.items);
+        // 其他属性（如 exclusiveMinimum, minimum, maximum, pattern 等）被忽略
     }
 
     return sanitized;
