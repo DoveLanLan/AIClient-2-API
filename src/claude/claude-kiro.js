@@ -288,6 +288,19 @@ function toFiniteNumber(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function sleep(ms) {
+  const delay = toFiniteNumber(ms, 0);
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, delay)));
+}
+
+function jitterMs(ms, { pct = 0.2, maxJitterMs = 500 } = {}) {
+  const base = toFiniteNumber(ms, 0);
+  if (base <= 0) return 0;
+  const jitter = Math.min(Math.floor(base * pct), maxJitterMs);
+  const delta = jitter > 0 ? Math.floor(Math.random() * (jitter + 1)) : 0;
+  return base + delta;
+}
+
 function parseCommaList(value) {
   if (value == null) return [];
   return String(value)
@@ -398,6 +411,64 @@ function minifyJsonSchemaForKiro(
   if (!out.type && schema.type) out.type = schema.type;
   if (!out.type && out.properties) out.type = "object";
   return out;
+}
+
+async function readAxiosErrorBody(error, { maxChars = 20000 } = {}) {
+  const data = error?.response?.data;
+  if (!data) return null;
+
+  if (typeof data === "string") return data.slice(0, maxChars);
+  if (Buffer.isBuffer(data)) return data.toString("utf8").slice(0, maxChars);
+
+  if (typeof data === "object") {
+    try {
+      if (typeof data.pipe !== "function") {
+        return JSON.stringify(data).slice(0, maxChars);
+      }
+    } catch {}
+  }
+
+  if (data && typeof data.on === "function") {
+    return await new Promise((resolve) => {
+      let out = "";
+      const cleanup = () => {
+        try {
+          data.removeAllListeners("data");
+          data.removeAllListeners("end");
+          data.removeAllListeners("error");
+        } catch {}
+      };
+      data.on("data", (chunk) => {
+        if (out.length >= maxChars) return;
+        out += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+        if (out.length >= maxChars) {
+          cleanup();
+          resolve(out.slice(0, maxChars));
+        }
+      });
+      data.on("end", () => {
+        cleanup();
+        resolve(out.slice(0, maxChars));
+      });
+      data.on("error", () => {
+        cleanup();
+        resolve(out.slice(0, maxChars));
+      });
+    });
+  }
+
+  return null;
+}
+
+function parseAwsJsonError(text) {
+  if (!text || typeof text !== "string") return null;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {}
+  return null;
 }
 
 export class KiroApiService {
@@ -1408,13 +1479,19 @@ export class KiroApiService {
 
       // Handle 429 (Too Many Requests) with exponential backoff
       if (error.response?.status === 429 && retryCount < maxRetries) {
-        const delay = baseDelay * Math.pow(2, retryCount);
+        const retryAfterHeader =
+          error.response?.headers?.["retry-after"] ??
+          error.response?.headers?.["Retry-After"];
+        const retryAfterMs = retryAfterHeader
+          ? toFiniteNumber(retryAfterHeader, 0) * 1000
+          : 0;
+        const delay = Math.max(baseDelay * Math.pow(2, retryCount), retryAfterMs);
         console.log(
           `[Kiro] Received 429 (Too Many Requests). Retrying in ${delay}ms... (attempt ${
             retryCount + 1
           }/${maxRetries})`
         );
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await sleep(jitterMs(delay));
         return this.callApi(method, model, body, isRetry, retryCount + 1);
       }
       try {
@@ -1473,31 +1550,59 @@ export class KiroApiService {
 
         // Handle 429 (Too Many Requests) with exponential backoff
         if (error.response?.status === 429 && retryCount < maxRetries) {
-          const delay = baseDelay * Math.pow(2, retryCount);
+          const retryAfterHeader =
+            error.response?.headers?.["retry-after"] ??
+            error.response?.headers?.["Retry-After"];
+          const retryAfterMs = retryAfterHeader
+            ? toFiniteNumber(retryAfterHeader, 0) * 1000
+            : 0;
+          const delay = Math.max(
+            baseDelay * Math.pow(2, retryCount),
+            retryAfterMs
+          );
           console.log(
             `[Kiro] Received 429 (Too Many Requests). Retrying in ${delay}ms... (attempt ${
               retryCount + 1
             }/${maxRetries})`
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await sleep(jitterMs(delay));
           return this.callApi(method, model, body, isRetry, retryCount + 1);
         }
 
         // Handle other retryable errors (5xx server errors)
+        const responseData = error.response?.data;
+        let errorReason = null;
+        if (responseData && typeof responseData === "object") {
+          errorReason = responseData.reason || responseData.data?.reason || null;
+        } else if (typeof responseData === "string") {
+          const parsed = parseAwsJsonError(responseData);
+          errorReason = parsed?.reason || parsed?.data?.reason || null;
+        }
         if (
           error.response?.status >= 500 &&
           error.response?.status < 600 &&
           retryCount < maxRetries
         ) {
-          const delay = baseDelay * Math.pow(2, retryCount);
+          const isModelUnavailable =
+            errorReason === "MODEL_TEMPORARILY_UNAVAILABLE";
+          const backoff = baseDelay * Math.pow(2, retryCount);
+          const minDelay = isModelUnavailable
+            ? toFiniteNumber(
+                this.config.KIRO_MODEL_UNAVAILABLE_DELAY_MS ?? 5000,
+                5000
+              )
+            : 0;
+          const delay = Math.max(backoff, minDelay);
           console.log(
             `[Kiro] Received ${
               error.response.status
-            } server error. Retrying in ${delay}ms... (attempt ${
+            } server error${
+              isModelUnavailable ? ` (${errorReason})` : ""
+            }. Retrying in ${delay}ms... (attempt ${
               retryCount + 1
             }/${maxRetries})`
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await sleep(jitterMs(delay));
           return this.callApi(method, model, body, isRetry, retryCount + 1);
         }
 
@@ -1511,7 +1616,7 @@ export class KiroApiService {
               retryCount + 1
             }/${maxRetries})`
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await sleep(jitterMs(delay));
           return this.callApi(method, model, body, isRetry, retryCount + 1);
         }
 
@@ -1766,7 +1871,14 @@ export class KiroApiService {
   /**
    * 真正的流式 API 调用 - 使用 responseType: 'stream'
    */
-  async *streamApiReal(method, model, body, isRetry = false, retryCount = 0) {
+  async *streamApiReal(
+    method,
+    model,
+    body,
+    isRetry = false,
+    retryCount = 0,
+    streamUrlMode = null
+  ) {
     if (!this.isInitialized) await this.initialize();
     const maxRetries = this.config.REQUEST_MAX_RETRIES || 3;
     const baseDelay = this.config.REQUEST_BASE_DELAY || 1000;
@@ -1784,9 +1896,30 @@ export class KiroApiService {
       "amz-sdk-invocation-id": `${uuidv4()}`,
     };
 
-    const requestUrl = model.startsWith("amazonq")
-      ? this.amazonQUrl
-      : this.baseUrl;
+    // Streaming URL selection:
+    // - Default: use BASE_URL (generateAssistantResponse) for normal Claude models.
+    // - For amazonq* models: use AMAZON_Q_URL (SendMessageStreaming).
+    // - Allow overrides via env/config.
+    const forceBaseUrl =
+      streamUrlMode === "base" ||
+      this.config.KIRO_STREAM_USE_BASE_URL === true ||
+      this.config.KIRO_STREAM_USE_BASE_URL === "true" ||
+      this.config.KIRO_STREAM_USE_BASE_URL === 1 ||
+      this.config.KIRO_STREAM_USE_BASE_URL === "1";
+
+    const forceAmazonQUrl =
+      streamUrlMode === "amazonq" ||
+      this.config.KIRO_STREAM_USE_AMAZON_Q_URL === true ||
+      this.config.KIRO_STREAM_USE_AMAZON_Q_URL === "true" ||
+      this.config.KIRO_STREAM_USE_AMAZON_Q_URL === 1 ||
+      this.config.KIRO_STREAM_USE_AMAZON_Q_URL === "1";
+
+    const shouldUseAmazonQUrl = forceAmazonQUrl || model.startsWith("amazonq");
+    const requestUrl = forceBaseUrl
+      ? this.baseUrl
+      : shouldUseAmazonQUrl
+        ? this.amazonQUrl
+        : this.baseUrl;
 
     let stream = null;
     try {
@@ -1836,19 +1969,123 @@ export class KiroApiService {
           "[Kiro] Received 403 in stream. Attempting token refresh and retrying..."
         );
         await this.initializeAuth(true);
-        yield* this.streamApiReal(method, model, body, true, retryCount);
+        yield* this.streamApiReal(
+          method,
+          model,
+          body,
+          true,
+          retryCount,
+          streamUrlMode
+        );
+        return;
+      }
+
+      const errorBodyText = await readAxiosErrorBody(error, {
+        maxChars: toFiniteNumber(
+          this.config.KIRO_MAX_ERROR_BODY_CHARS ?? 20000,
+          20000
+        ),
+      });
+      const errorJson = parseAwsJsonError(errorBodyText);
+      const errorReason = errorJson?.reason || errorJson?.data?.reason;
+      const status = error.response?.status;
+      const errorMessage =
+        (errorJson?.message || errorJson?.data?.message || "")
+          .toString()
+          .toLowerCase();
+
+      // If we're on the streaming endpoint and it looks like a wrong-endpoint/payload error,
+      // try the unary endpoint once (and only once to avoid loops).
+      const endpointSwitchable =
+        this.baseUrl &&
+        this.amazonQUrl &&
+        this.baseUrl !== this.amazonQUrl &&
+        streamUrlMode == null;
+      if (
+        endpointSwitchable &&
+        (status === 400 || status === 404 || status === 405)
+      ) {
+        console.warn(
+          `[Kiro] Stream endpoint ${requestUrl} returned ${status}; retrying with alternate endpoint...`
+        );
+        yield* this.streamApiReal(method, model, body, isRetry, retryCount, "base");
+        return;
+      }
+
+      // Some accounts don't have Amazon Q / streaming app subscription, but still work with BASE_URL.
+      if (
+        endpointSwitchable &&
+        status === 403 &&
+        requestUrl === this.amazonQUrl &&
+        errorMessage.includes("subscription does not support this application")
+      ) {
+        console.warn(
+          "[Kiro] Stream endpoint returned subscription error; retrying with BASE_URL..."
+        );
+        yield* this.streamApiReal(method, model, body, isRetry, retryCount, "base");
         return;
       }
 
       if (error.response?.status === 429 && retryCount < maxRetries) {
-        const delay = baseDelay * Math.pow(2, retryCount);
+        const retryAfterHeader =
+          error.response?.headers?.["retry-after"] ??
+          error.response?.headers?.["Retry-After"];
+        const retryAfterMs = retryAfterHeader
+          ? toFiniteNumber(retryAfterHeader, 0) * 1000
+          : 0;
+        const delay = Math.max(baseDelay * Math.pow(2, retryCount), retryAfterMs);
         console.log(`[Kiro] Received 429 in stream. Retrying in ${delay}ms...`);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        yield* this.streamApiReal(method, model, body, isRetry, retryCount + 1);
+        await sleep(jitterMs(delay));
+        yield* this.streamApiReal(
+          method,
+          model,
+          body,
+          isRetry,
+          retryCount + 1,
+          streamUrlMode
+        );
+        return;
+      }
+
+      // Treat 5xx and "MODEL_TEMPORARILY_UNAVAILABLE" as retryable for streaming.
+      if (
+        ((status >= 500 && status < 600) ||
+          errorReason === "MODEL_TEMPORARILY_UNAVAILABLE" ||
+          this.isNetworkError(error)) &&
+        retryCount < maxRetries
+      ) {
+        const isModelUnavailable = errorReason === "MODEL_TEMPORARILY_UNAVAILABLE";
+        const backoff = baseDelay * Math.pow(2, retryCount);
+        const minDelay = isModelUnavailable
+          ? toFiniteNumber(
+              this.config.KIRO_MODEL_UNAVAILABLE_DELAY_MS ?? 5000,
+              5000
+            )
+          : 0;
+        const delay = Math.max(backoff, minDelay);
+        console.log(
+          `[Kiro] Stream request failed (${status || "network"}${
+            isModelUnavailable ? `, ${errorReason}` : ""
+          }). Retrying in ${delay}ms... (attempt ${retryCount + 1}/${maxRetries})`
+        );
+        await sleep(jitterMs(delay));
+        yield* this.streamApiReal(
+          method,
+          model,
+          body,
+          isRetry,
+          retryCount + 1,
+          streamUrlMode
+        );
         return;
       }
 
       console.error("[Kiro] Stream API call failed:", error.message);
+      if (errorJson) {
+        console.error("[Kiro] Stream API error details:", errorJson);
+      } else if (errorBodyText) {
+        console.error("[Kiro] Stream API error body (truncated):", errorBodyText);
+      }
       throw error;
     } finally {
       // 确保流被关闭，释放资源
@@ -1913,50 +2150,51 @@ export class KiroApiService {
       let outputTokens = 0;
       const toolCalls = [];
       let currentToolCall = null; // 用于累积结构化工具调用
+      let receivedAnyModelEvent = false;
 
       // 3. 流式接收并发送每个 content_block_delta
-      for await (const event of this.streamApiReal(
-        "",
-        finalModel,
-        requestBody
-      )) {
-        if (event.type === "content" && event.content) {
-          totalContent += event.content;
-          // 不再每个 chunk 都计算 token，改为最后统一计算，避免阻塞事件循环
-
-          yield {
-            type: "content_block_delta",
-            index: 0,
-            delta: { type: "text_delta", text: event.content },
-          };
-        } else if (event.type === "toolUse") {
-          const tc = event.toolUse;
-          // 工具调用事件（包含 name 和 toolUseId）
-          if (tc.name && tc.toolUseId) {
-            // 检查是否是同一个工具调用的续传（相同 toolUseId）
-            if (currentToolCall && currentToolCall.toolUseId === tc.toolUseId) {
-              // 同一个工具调用，累积 input
-              currentToolCall.input += tc.input || "";
-            } else {
-              // 不同的工具调用
-              // 如果有未完成的工具调用，先保存它
-              if (currentToolCall) {
+      try {
+        for await (const event of this.streamApiReal("", finalModel, requestBody)) {
+          receivedAnyModelEvent = true;
+          if (event.type === "content" && event.content) {
+            totalContent += event.content;
+            yield {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "text_delta", text: event.content },
+            };
+          } else if (event.type === "toolUse") {
+            const tc = event.toolUse;
+            if (tc.name && tc.toolUseId) {
+              if (currentToolCall && currentToolCall.toolUseId === tc.toolUseId) {
+                currentToolCall.input += tc.input || "";
+              } else {
+                if (currentToolCall) {
+                  try {
+                    currentToolCall.input = JSON.parse(currentToolCall.input);
+                  } catch (e) {}
+                  toolCalls.push(currentToolCall);
+                }
+                currentToolCall = {
+                  toolUseId: tc.toolUseId,
+                  name: tc.name,
+                  input: tc.input || "",
+                };
+              }
+              if (tc.stop) {
                 try {
                   currentToolCall.input = JSON.parse(currentToolCall.input);
-                } catch (e) {
-                  // input 不是有效 JSON，保持原样
-                }
+                } catch (e) {}
                 toolCalls.push(currentToolCall);
+                currentToolCall = null;
               }
-              // 开始新的工具调用
-              currentToolCall = {
-                toolUseId: tc.toolUseId,
-                name: tc.name,
-                input: tc.input || "",
-              };
             }
-            // 如果这个事件包含 stop，完成工具调用
-            if (tc.stop) {
+          } else if (event.type === "toolUseInput") {
+            if (currentToolCall) {
+              currentToolCall.input += event.input || "";
+            }
+          } else if (event.type === "toolUseStop") {
+            if (currentToolCall && event.stop) {
               try {
                 currentToolCall.input = JSON.parse(currentToolCall.input);
               } catch (e) {}
@@ -1964,22 +2202,40 @@ export class KiroApiService {
               currentToolCall = null;
             }
           }
-        } else if (event.type === "toolUseInput") {
-          // 工具调用的 input 续传事件
-          if (currentToolCall) {
-            currentToolCall.input += event.input || "";
+        }
+      } catch (streamError) {
+        // If upstream streaming fails before yielding any model events,
+        // fall back to unary and simulate the stream for better client UX.
+        if (!receivedAnyModelEvent) {
+          console.warn(
+            `[Kiro] Streaming failed before yielding data; falling back to unary for model ${finalModel}: ${streamError.message}`
+          );
+          const unary = await this.generateContent(finalModel, requestBody);
+          const unaryBlocks = Array.isArray(unary?.content) ? unary.content : [];
+          const unaryText = unaryBlocks
+            .filter((b) => b?.type === "text" && typeof b.text === "string")
+            .map((b) => b.text)
+            .join("");
+          const unaryToolUses = unaryBlocks.filter((b) => b?.type === "tool_use");
+
+          if (unaryText) {
+            totalContent += unaryText;
+            yield {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "text_delta", text: unaryText },
+            };
           }
-        } else if (event.type === "toolUseStop") {
-          // 工具调用结束事件
-          if (currentToolCall && event.stop) {
-            try {
-              currentToolCall.input = JSON.parse(currentToolCall.input);
-            } catch (e) {
-              // input 不是有效 JSON，保持原样
-            }
-            toolCalls.push(currentToolCall);
-            currentToolCall = null;
+
+          for (const tu of unaryToolUses) {
+            toolCalls.push({
+              toolUseId: tu.id || `tool_${uuidv4()}`,
+              name: tu.name,
+              input: tu.input || {},
+            });
           }
+        } else {
+          throw streamError;
         }
       }
 
