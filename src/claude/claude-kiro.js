@@ -301,6 +301,211 @@ function jitterMs(ms, { pct = 0.2, maxJitterMs = 500 } = {}) {
   return base + delta;
 }
 
+function utf8ByteLength(value) {
+  if (value == null) return 0;
+  return Buffer.byteLength(String(value), "utf8");
+}
+
+function jsonUtf8ByteLength(value) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function truncateUtf8ByBytes(text, maxBytes) {
+  const s = String(text ?? "");
+  const limit = toFiniteNumber(maxBytes, 0);
+  if (limit <= 0) return "";
+  const current = utf8ByteLength(s);
+  if (current <= limit) return s;
+
+  const marker = "\n…[truncated]…\n";
+  const markerBytes = utf8ByteLength(marker);
+  if (limit <= markerBytes) return marker.slice(0, Math.max(0, limit));
+
+  const remaining = limit - markerBytes;
+  const headBytes = Math.floor(remaining * 0.6);
+  const tailBytes = remaining - headBytes;
+
+  const buf = Buffer.from(s, "utf8");
+  const head = buf.subarray(0, Math.max(0, headBytes)).toString("utf8");
+  const tail = buf
+    .subarray(Math.max(0, buf.length - tailBytes), buf.length)
+    .toString("utf8");
+  return `${head}${marker}${tail}`;
+}
+
+function looksLikeClaudeCodeCompact(text) {
+  const t = String(text ?? "");
+  return (
+    t.includes("<command-name>/compact</command-name>") ||
+    t.includes("<command-name>/summary</command-name>") ||
+    /\n\/compact\b/i.test(t) ||
+    /\n\/summary\b/i.test(t) ||
+    /error during compaction/i.test(t) ||
+    /summarize this coding conversation/i.test(t)
+  );
+}
+
+function cleanupEmptyUserInputMessageContext(userInputMessage) {
+  const ctx = userInputMessage?.userInputMessageContext;
+  if (!ctx || typeof ctx !== "object") return;
+  for (const [k, v] of Object.entries(ctx)) {
+    if (v == null) delete ctx[k];
+    else if (Array.isArray(v) && v.length === 0) delete ctx[k];
+    else if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0)
+      delete ctx[k];
+  }
+  if (Object.keys(ctx).length === 0) delete userInputMessage.userInputMessageContext;
+}
+
+function shrinkKiroRequestToFit(request, { config, isCompact, maxRequestBytes }) {
+  const limit = toFiniteNumber(maxRequestBytes, 0);
+  if (limit <= 0) return { changed: false, bytes: jsonUtf8ByteLength(request) };
+
+  const conversationState = request?.conversationState;
+  const currentUserInput =
+    conversationState?.currentMessage?.userInputMessage ?? null;
+  if (!conversationState || !currentUserInput) {
+    return { changed: false, bytes: jsonUtf8ByteLength(request) };
+  }
+
+  const maxHistoryMessages = toFiniteNumber(
+    config?.KIRO_MAX_HISTORY_MESSAGES ?? 40,
+    40
+  );
+  const maxMessageBytes = toFiniteNumber(
+    config?.KIRO_MAX_MESSAGE_BYTES ?? 40000,
+    40000
+  );
+  const compactDropTools =
+    config?.KIRO_COMPACT_DROP_TOOLS === false ||
+    config?.KIRO_COMPACT_DROP_TOOLS === "false" ||
+    config?.KIRO_COMPACT_DROP_TOOLS === 0 ||
+    config?.KIRO_COMPACT_DROP_TOOLS === "0"
+      ? false
+      : true;
+  const dropToolsOnOverflow =
+    config?.KIRO_DROP_TOOLS_ON_OVERFLOW === false ||
+    config?.KIRO_DROP_TOOLS_ON_OVERFLOW === "false" ||
+    config?.KIRO_DROP_TOOLS_ON_OVERFLOW === 0 ||
+    config?.KIRO_DROP_TOOLS_ON_OVERFLOW === "0"
+      ? false
+      : true;
+  const dropImagesOnOverflow =
+    config?.KIRO_DROP_IMAGES_ON_OVERFLOW === false ||
+    config?.KIRO_DROP_IMAGES_ON_OVERFLOW === "false" ||
+    config?.KIRO_DROP_IMAGES_ON_OVERFLOW === 0 ||
+    config?.KIRO_DROP_IMAGES_ON_OVERFLOW === "0"
+      ? false
+      : true;
+
+  let bytes = jsonUtf8ByteLength(request);
+  if (bytes <= limit) return { changed: false, bytes };
+  let changed = false;
+
+  const tryStep = (label, fn) => {
+    if (bytes <= limit) return;
+    const before = bytes;
+    fn();
+    bytes = jsonUtf8ByteLength(request);
+    if (bytes < before) {
+      changed = true;
+      console.warn(
+        `[Kiro] Request too large (${before} bytes). Applied "${label}" => ${bytes} bytes`
+      );
+    }
+  };
+
+  // 1) For compaction-style prompts, tools are rarely needed and can be huge.
+  if (isCompact && compactDropTools) {
+    tryStep("drop tools for compact", () => {
+      if (currentUserInput.userInputMessageContext?.tools) {
+        delete currentUserInput.userInputMessageContext.tools;
+        cleanupEmptyUserInputMessageContext(currentUserInput);
+      }
+    });
+  }
+
+  // 2) Keep only the most recent history items.
+  tryStep("trim history count", () => {
+    const history = conversationState.history;
+    if (!Array.isArray(history)) return;
+    if (history.length <= maxHistoryMessages) return;
+    conversationState.history = history.slice(
+      Math.max(0, history.length - maxHistoryMessages)
+    );
+    if (conversationState.history.length === 0) delete conversationState.history;
+  });
+
+  // 3) Truncate individual message contents (history + current) to a per-message budget.
+  tryStep("truncate message contents", () => {
+    const history = conversationState.history;
+    if (Array.isArray(history)) {
+      for (const item of history) {
+        if (item?.userInputMessage?.content) {
+          item.userInputMessage.content = truncateUtf8ByBytes(
+            item.userInputMessage.content,
+            maxMessageBytes
+          );
+        }
+        if (item?.assistantResponseMessage?.content) {
+          item.assistantResponseMessage.content = truncateUtf8ByBytes(
+            item.assistantResponseMessage.content,
+            maxMessageBytes
+          );
+        }
+      }
+    }
+
+    if (currentUserInput.content) {
+      currentUserInput.content = truncateUtf8ByBytes(
+        currentUserInput.content,
+        maxMessageBytes
+      );
+    }
+  });
+
+  // 4) If still too big, drop tool definitions (keeps toolResults).
+  if (dropToolsOnOverflow) {
+    tryStep("drop tools on overflow", () => {
+      if (currentUserInput.userInputMessageContext?.tools) {
+        delete currentUserInput.userInputMessageContext.tools;
+        cleanupEmptyUserInputMessageContext(currentUserInput);
+      }
+    });
+  }
+
+  // 5) If still too big, drop images (they can be base64-heavy).
+  if (dropImagesOnOverflow) {
+    tryStep("drop images on overflow", () => {
+      if (currentUserInput.images) delete currentUserInput.images;
+    });
+  }
+
+  // 6) If still too big, drop history entirely and keep only current message.
+  tryStep("drop history entirely", () => {
+    if (conversationState.history) delete conversationState.history;
+  });
+
+  // 7) Final: force current content to fit within the remaining byte budget.
+  tryStep("force-fit current content", () => {
+    const original = String(currentUserInput.content ?? "");
+
+    currentUserInput.content = "";
+    cleanupEmptyUserInputMessageContext(currentUserInput);
+    const baseBytes = jsonUtf8ByteLength(request);
+    const allowance = Math.max(0, limit - baseBytes);
+
+    const next = truncateUtf8ByBytes(original, allowance);
+    currentUserInput.content = next || "Continue";
+  });
+
+  return { changed, bytes };
+}
+
 function parseCommaList(value) {
   if (value == null) return [];
   return String(value)
@@ -1309,6 +1514,27 @@ export class KiroApiService {
 
     if (this.authMethod === KIRO_CONSTANTS.AUTH_METHOD_SOCIAL) {
       request.profileArn = this.profileArn;
+    }
+
+    // Prevent AWS ValidationException: CONTENT_LENGTH_EXCEEDS_THRESHOLD
+    // by shrinking overly large requests (especially Claude Code /compact payloads).
+    const maxRequestBytes = toFiniteNumber(
+      this.config.KIRO_MAX_REQUEST_BYTES ?? 240000,
+      240000
+    );
+    if (maxRequestBytes > 0) {
+      const compactLike = looksLikeClaudeCodeCompact(currentContent);
+      const beforeBytes = jsonUtf8ByteLength(request);
+      const shrunk = shrinkKiroRequestToFit(request, {
+        config: this.config,
+        isCompact: compactLike,
+        maxRequestBytes,
+      });
+      if (shrunk.changed) {
+        console.warn(
+          `[Kiro] Shrunk request to ${shrunk.bytes} bytes (from ${beforeBytes})`
+        );
+      }
     }
 
     // fs.writeFile('claude-kiro-request'+Date.now()+'.json', JSON.stringify(request));
